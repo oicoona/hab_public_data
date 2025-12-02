@@ -24,7 +24,59 @@ streamlit run app.py
 
 ## 버전 히스토리
 
-### v1.1 (현재)
+### v1.1.1 (현재)
+
+**AI 분석 고도화** - Tool Calling 도입 및 성능 최적화
+
+#### 주요 변경사항
+
+| 영역 | v1.1 | v1.1.1 |
+|:-----|:-----|:-------|
+| **AI 모델** | Claude 4 시리즈 | Claude 4.5 시리즈 (Sonnet, Opus, Haiku) |
+| **챗봇 분석** | 샘플링 데이터 기반 | Tool Calling (15개 분석 도구) |
+| **대화 컨텍스트** | 전체 통합 이력 | 데이터셋별 분리 관리 |
+| **응답 출력** | 전체 완료 후 표시 | 스트리밍 실시간 출력 |
+| **지도 렌더링** | 매번 새로 생성 | session_state 캐싱 |
+| **교차 분석** | 통합 지도 포함 | 제거 (단순화) |
+
+#### Tool Calling 분석 도구 (15개)
+
+| 도구 | 설명 |
+|:-----|:-----|
+| `get_dataframe_info` | DataFrame 기본 정보 |
+| `get_column_statistics` | 컬럼별 통계 |
+| `get_missing_values` | 결측치 현황 |
+| `get_value_counts` | 값 분포 |
+| `filter_dataframe` | 조건 필터링 |
+| `sort_dataframe` | 정렬 |
+| `get_correlation` | 상관관계 |
+| `group_by_aggregate` | 그룹별 집계 |
+| `get_unique_values` | 고유값 목록 |
+| `get_date_range` | 날짜 범위 |
+| `get_outliers` | 이상치 탐지 |
+| `get_sample_rows` | 샘플 추출 |
+| `calculate_percentile` | 백분위수 |
+| `get_geo_bounds` | 지리적 범위 |
+| `cross_tabulation` | 교차표 |
+
+#### 버그 수정
+
+- ZeroDivisionError 방지 (빈 DataFrame 처리)
+- NaN 값 안전한 포맷팅 처리
+- 빈 좌표 데이터 지도 렌더링 오류 수정
+
+#### 성능 개선
+
+- `iterrows` → `itertuples` 변환
+- 지도 객체 캐싱 (`session_state`)
+- `st_folium` 리렌더링 방지 (`returned_objects=[]`)
+
+기준 문서: `docs/v1.1.1/app_improvement_proposal.md`
+스펙 문서: `specs/003-app-v111-upgrade/`
+
+---
+
+### v1.1
 
 **사용자 중심 개선** - CSV 업로드 방식 전환 및 AI 챗봇 도입
 
@@ -80,11 +132,11 @@ streamlit run app.py
 | 분류 | 기술 |
 |------|------|
 | **언어** | Python 3.10+ |
-| **웹 프레임워크** | Streamlit |
-| **데이터 처리** | pandas, numpy |
-| **시각화** | Plotly, Folium |
-| **지도 연동** | streamlit-folium |
-| **AI** | Anthropic Claude |
+| **웹 프레임워크** | Streamlit 1.28+ |
+| **데이터 처리** | pandas 2.0+, numpy 1.24+ |
+| **시각화** | Plotly 5.17+, Folium 0.14+ |
+| **지도 연동** | streamlit-folium 0.15+ |
+| **AI** | Anthropic Claude 4.5 |
 | **스펙 관리** | GitHub SpecKit |
 | **개발 도구** | Claude Code |
 
@@ -96,6 +148,8 @@ streamlit run app.py
 |------|------|
 | `docs/v1.0/*.md` | v1.0 스펙 결정을 위한 최초 참고 문서 |
 | `docs/v1.1/*.md` | v1.1 개선 제안서 및 노트 |
+| `docs/v1.1.1/*.md` | v1.1.1 개선 제안서 (Tool Calling, 성능 최적화) |
 | `specs/001-daegu-data-viz/` | v1.0 스펙 산출물 (spec, plan, tasks) |
 | `specs/002-app-v1-1-upgrade/` | v1.1 스펙 산출물 |
+| `specs/003-app-v111-upgrade/` | v1.1.1 스펙 산출물 |
 | `streamlit_study/` | Streamlit 학습 예제 (01~14번) |
