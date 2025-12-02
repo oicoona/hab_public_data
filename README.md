@@ -24,7 +24,40 @@ streamlit run app.py
 
 ## 버전 히스토리
 
-### v1.1.1 (현재)
+### v1.1.2 (현재)
+
+**사용자 경험 개선** - Tool Calling UX 고도화 및 분석 도구 확장
+
+#### 주요 변경사항
+
+| 영역 | v1.1.1 | v1.1.2 |
+|:-----|:-------|:-------|
+| **Tool Calling 피드백** | "도구 실행 중..." 단순 텍스트 | st.status로 도구명, 순번, 경과시간 표시 |
+| **토큰 사용량** | 표시만 됨 (업데이트 안됨) | API 응답에서 실시간 추출하여 표시 |
+| **도구 미발견 처리** | 정적 에러 메시지 | LLM 폴백으로 동적 응답 생성 |
+| **분석 도구** | 15개 | 20개 (+5개 추가) |
+| **데이터셋 전환** | 매번 컨텍스트 재생성 | 컨텍스트 캐싱으로 속도 향상 |
+
+#### 추가된 분석 도구 (5개)
+
+| 도구 | 설명 |
+|:-----|:-----|
+| `analyze_missing_pattern` | 결측값 패턴 분석 (MCAR, MAR, MNAR 추정) |
+| `get_column_correlation_with_target` | 타겟 컬럼과의 상관관계 분석 |
+| `detect_data_types` | 컬럼별 실제 데이터 타입 추론 |
+| `get_temporal_pattern` | 시간 관련 컬럼의 패턴 분석 |
+| `summarize_categorical_distribution` | 범주형 컬럼 분포 요약 |
+
+#### 버그 수정
+
+- 토큰 사용량 미업데이트 수정 (API 응답에서 usage 추출)
+- Claude Haiku 4.5 모델 ID 수정 (`20250901` → `20251001`)
+
+기준 문서: `docs/v1.1.2/app_improvement_proposal.md`
+
+---
+
+### v1.1.1
 
 **AI 분석 고도화** - Tool Calling 도입 및 성능 최적화
 
@@ -149,6 +182,7 @@ streamlit run app.py
 | `docs/v1.0/*.md` | v1.0 스펙 결정을 위한 최초 참고 문서 |
 | `docs/v1.1/*.md` | v1.1 개선 제안서 및 노트 |
 | `docs/v1.1.1/*.md` | v1.1.1 개선 제안서 (Tool Calling, 성능 최적화) |
+| `docs/v1.1.2/*.md` | v1.1.2 개선 제안서 (UX 개선, 분석 도구 확장) |
 | `specs/001-daegu-data-viz/` | v1.0 스펙 산출물 (spec, plan, tasks) |
 | `specs/002-app-v1-1-upgrade/` | v1.1 스펙 산출물 |
 | `specs/003-app-v111-upgrade/` | v1.1.1 스펙 산출물 |
