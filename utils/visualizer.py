@@ -294,7 +294,8 @@ def create_folium_map(
     popup_cols: list[str] | None = None,
     color: str = 'blue',
     name: str = 'Points',
-    icon: str = 'info-sign'
+    icon: str = 'info-sign',
+    max_points: int = 5000
 ) -> folium.Map:
     """
     Create Folium map with markers for dataset.
@@ -306,6 +307,7 @@ def create_folium_map(
         color (str): Marker color (default: 'blue')
         name (str): Layer name for legend (default: 'Points')
         icon (str): Marker icon (default: 'info-sign')
+        max_points (int): Maximum number of points to display (default: 5000)
 
     Returns:
         folium.Map: Map object ready for rendering
@@ -326,9 +328,9 @@ def create_folium_map(
         )
         return m
 
-    # Sample to 5000 points if dataset larger (for performance)
-    if len(df_clean) > 5000:
-        df_clean = df_clean.sample(5000, random_state=42)
+    # Sample to max_points if dataset larger (for performance)
+    if len(df_clean) > max_points:
+        df_clean = df_clean.sample(max_points, random_state=42)
 
     # Calculate map center as mean of coordinates
     center_lat = df_clean[lat_col].mean()
@@ -397,7 +399,7 @@ def create_folium_map(
     return m
 
 
-def create_overlay_map(datasets: list[dict]) -> folium.Map:
+def create_overlay_map(datasets: list[dict], max_points: int = 5000) -> folium.Map:
     """
     Create map with multiple datasets overlaid as separate layers.
 
@@ -410,6 +412,7 @@ def create_overlay_map(datasets: list[dict]) -> folium.Map:
             - color (str): Marker color
             - name (str): Layer name
             - icon (str): Marker icon
+        max_points (int): Maximum number of points per dataset (default: 5000)
 
     Returns:
         folium.Map: Map with multiple togglable layers
@@ -471,8 +474,8 @@ def create_overlay_map(datasets: list[dict]) -> folium.Map:
         df_clean = df.dropna(subset=[lat_col, lng_col]).copy()
 
         # Sample if needed
-        if len(df_clean) > 5000:
-            df_clean = df_clean.sample(5000, random_state=42)
+        if len(df_clean) > max_points:
+            df_clean = df_clean.sample(max_points, random_state=42)
 
         # Create feature group
         feature_group = folium.FeatureGroup(name=name)

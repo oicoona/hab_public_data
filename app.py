@@ -123,6 +123,13 @@ def init_session_state():
             'tokens': {'total': 0, 'input': 0, 'output': 0}
         }
 
+    # 지도 설정
+    if 'map_settings' not in st.session_state:
+        st.session_state.map_settings = {
+            'max_points': 5000,  # 기본값
+            'confirmed': False   # Enter 키 입력 여부
+        }
+
     st.session_state.initialized = True
 
 
@@ -226,22 +233,29 @@ def render_dataset_tab(dataset_name: str, dataset_display_name: str):
         st.markdown("### 🗺️ 지리적 분포")
         st.info(f"감지된 좌표: **{lat_col}** (위도), **{lng_col}** (경도)")
 
-        # Get columns for popup (exclude coordinate columns, limit to first 3 non-numeric)
-        popup_candidates = [col for col in df.columns if col not in [lat_col, lng_col]]
-        popup_cols = popup_candidates[:3]  # Show first 3 columns in popup
+        # 지도 설정 확인 여부 체크
+        if not st.session_state.map_settings['confirmed']:
+            st.warning("⚠️ 사이드바에서 지도 설정을 확인하고 Enter 키를 눌러주세요.")
+        else:
+            # Get columns for popup (exclude coordinate columns, limit to first 3 non-numeric)
+            popup_candidates = [col for col in df.columns if col not in [lat_col, lng_col]]
+            popup_cols = popup_candidates[:3]  # Show first 3 columns in popup
 
-        # T041: Map caching with session_state
-        cache_key = f"map_{dataset_name}_{len(df)}"
-        if cache_key not in st.session_state:
-            st.session_state[cache_key] = create_folium_map(
-                df, lat_col, lng_col,
-                popup_cols=popup_cols,
-                color='blue',
-                name=dataset_display_name
-            )
+            # 지도 캐시 키에 max_points 포함
+            max_points = st.session_state.map_settings['max_points']
+            cache_key = f"map_{dataset_name}_{len(df)}_{max_points}"
 
-        # T042: Display map with returned_objects=[] to prevent rerendering
-        st_folium(st.session_state[cache_key], width=700, height=500, returned_objects=[])
+            if cache_key not in st.session_state:
+                st.session_state[cache_key] = create_folium_map(
+                    df, lat_col, lng_col,
+                    popup_cols=popup_cols,
+                    color='blue',
+                    name=dataset_display_name,
+                    max_points=max_points
+                )
+
+            # T042: Display map with returned_objects=[] to prevent rerendering
+            st_folium(st.session_state[cache_key], width=700, height=500, returned_objects=[])
     else:
         st.info("ℹ️ 지리 좌표가 감지되지 않았습니다. 이 데이터셋에는 지도 시각화를 사용할 수 없습니다.")
 
@@ -758,6 +772,42 @@ def render_sidebar():
                 st.error("❌ API Key 형식이 올바르지 않습니다")
         else:
             st.info("API Key를 입력하면 AI 챗봇을 사용할 수 있습니다")
+
+        # 지도 설정
+        st.subheader("🗺️ 지도 설정")
+
+        with st.form(key="map_settings_form", clear_on_submit=False):
+            map_points_input = st.text_input(
+                "최대 표시 포인트 수",
+                value=str(st.session_state.map_settings['max_points']),
+                placeholder="5000",
+                help="지도에 표시할 최대 데이터 포인트 수입니다."
+            )
+            st.caption("기본값: 5000")
+
+            # 숨김 submit 버튼 (Enter 키로 제출)
+            submitted = st.form_submit_button("적용", use_container_width=True)
+
+            if submitted:
+                try:
+                    new_val = int(map_points_input) if map_points_input else 5000
+                    if new_val <= 0:
+                        st.error("❌ 1 이상의 숫자를 입력해주세요")
+                    else:
+                        st.session_state.map_settings['max_points'] = new_val
+                        st.session_state.map_settings['confirmed'] = True
+                        # 지도 캐시 초기화
+                        keys_to_delete = [k for k in list(st.session_state.keys()) if k.startswith('map_') and k != 'map_settings']
+                        for k in keys_to_delete:
+                            del st.session_state[k]
+                except ValueError:
+                    st.error("❌ 숫자를 입력해주세요")
+
+        # 상태 표시 (form 외부)
+        if st.session_state.map_settings['confirmed']:
+            st.success(f"✅ 지도 포인트 수: {st.session_state.map_settings['max_points']:,}개")
+        else:
+            st.info("Enter 키 또는 적용 버튼을 눌러 지도 설정을 적용하세요")
 
         # T042: Model selection
         st.subheader("모델 선택")
