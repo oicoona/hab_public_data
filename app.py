@@ -6,6 +6,7 @@ Provides individual dataset exploration, cross-dataset spatial analysis, and
 educational content to help data analysis learners discover insights independently.
 """
 import io
+import time
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -90,7 +91,7 @@ DATASET_MAPPING = {
 AI_MODEL_OPTIONS = [
     {'id': 'claude-sonnet-4-5-20250929', 'name': 'Claude Sonnet 4.5', 'description': '빠른 응답, 비용 효율적 (권장)'},
     {'id': 'claude-opus-4-5-20251101', 'name': 'Claude Opus 4.5', 'description': '복잡한 분석에 적합'},
-    {'id': 'claude-haiku-4-5-20250901', 'name': 'Claude Haiku 4.5', 'description': '간단한 질문에 최적'}
+    {'id': 'claude-haiku-4-5-20251001', 'name': 'Claude Haiku 4.5', 'description': '간단한 질문에 최적'}
 ]
 
 
@@ -1184,8 +1185,11 @@ def render_chatbot_tab():
                 # Create Anthropic client
                 client = Anthropic(api_key=api_key)
 
-                # Create data context
-                data_context = create_data_context(df, selected_display_name)
+                # v1.1.2: Create data context with caching
+                cache_key = f"context_{selected_dataset_key}_{len(df)}"
+                if cache_key not in st.session_state:
+                    st.session_state[cache_key] = create_data_context(df, selected_display_name)
+                data_context = st.session_state[cache_key]
 
                 # Prepare messages for API
                 api_messages = [
@@ -1205,9 +1209,52 @@ def render_chatbot_tab():
                     df=df
                 )
 
+                # v1.1.2: Tool execution UI state
+                tool_status = None
+                tool_start_time = None
+
+                # T046 v1.1.2: Process stream with usage tracking and tool feedback
                 for chunk in stream_gen:
-                    full_response += chunk
-                    response_container.markdown(full_response + "▌")
+                    if isinstance(chunk, dict):
+                        if '__usage__' in chunk:
+                            # Update token usage from final message
+                            usage = chunk['__usage__']
+                            st.session_state.chatbot['tokens']['input'] += usage['input_tokens']
+                            st.session_state.chatbot['tokens']['output'] += usage['output_tokens']
+                            st.session_state.chatbot['tokens']['total'] += (
+                                usage['input_tokens'] + usage['output_tokens']
+                            )
+                        elif '__tool_batch_start__' in chunk:
+                            # Tool batch started - create status container
+                            tool_start_time = time.time()
+                            tool_status = st.status("🔍 도구 탐색 중...", expanded=True)
+                        elif '__tool_start__' in chunk:
+                            # Individual tool starting
+                            info = chunk['__tool_start__']
+                            if tool_status:
+                                elapsed = time.time() - tool_start_time if tool_start_time else 0
+                                tool_status.update(label=f"🔍 도구 실행 중... ({elapsed:.1f}초)")
+                                tool_status.write(f"🔄 {info['index']}/{info['total']} `{info['name']}` 실행 중...")
+                        elif '__tool_end__' in chunk:
+                            # Individual tool completed
+                            info = chunk['__tool_end__']
+                            if tool_status:
+                                tool_status.write(f"✅ {info['index']}/{info['total']} `{info['name']}` 완료 ({info['elapsed']:.2f}초)")
+                        elif '__tool_batch_end__' in chunk:
+                            # All tools completed
+                            if tool_status:
+                                total_elapsed = time.time() - tool_start_time if tool_start_time else 0
+                                tool_status.update(label=f"✅ 도구 실행 완료 ({total_elapsed:.1f}초)", state="complete", expanded=False)
+                                tool_status = None
+                        elif '__fallback_start__' in chunk:
+                            # v1.1.2: LLM fallback mode
+                            st.info("💡 도구 기반 분석이 어려워 일반 응답으로 전환합니다...")
+                        elif '__fallback_end__' in chunk:
+                            # Fallback completed, nothing to do
+                            pass
+                    else:
+                        full_response += chunk
+                        response_container.markdown(full_response + "▌")
 
                 response_container.markdown(full_response)
 
