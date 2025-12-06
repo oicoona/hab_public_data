@@ -8,6 +8,18 @@
 
 ## 빠른 시작
 
+### uv 사용 (권장)
+
+```bash
+# 1. uv 설치 (최초 1회)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 2. 의존성 설치 및 앱 실행
+uv run streamlit run app.py
+```
+
+### pip 사용 (기존 방식)
+
 ```bash
 # 1. 가상환경 생성 및 활성화
 python -m venv venv
@@ -24,7 +36,45 @@ streamlit run app.py
 
 ## 버전 히스토리
 
-### v1.1.3 (현재)
+### v1.2 (현재)
+
+**LangGraph 마이그레이션** - LangGraph 기반 Tool Calling 아키텍처로 전환
+
+#### 주요 변경사항
+
+| 영역 | v1.1.x | v1.2 |
+|:-----|:-------|:-----|
+| **Tool Calling 아키텍처** | Anthropic API 직접 사용 | LangGraph StateGraph 기반 |
+| **워크플로우** | 동기 Tool 실행 | 조건부 라우팅 기반 비동기 처리 |
+| **분석 도구** | 20개 | 21개 (+ECLO 예측) |
+| **패키지 매니저** | pip only | uv 지원 추가 |
+
+#### 신규 기능
+
+- **ECLO 예측 도구**: LightGBM 모델 기반 사고 심각도 예측
+- **LangGraph 워크플로우**: chatbot-tools 조건부 라우팅
+- **버전 히스토리 UI**: 프로젝트 개요 탭에 버전 히스토리 표시
+- **아키텍처 시각화**: LangGraph 워크플로우 다이어그램 및 21개 도구 목록
+
+#### 기술 스택 추가
+
+- `langchain>=0.3.0`
+- `langchain-anthropic>=0.3.0`
+- `langgraph>=0.2.0`
+
+#### 새로운 모듈
+
+| 모듈 | 설명 |
+|:-----|:-----|
+| `utils/graph.py` | LangGraph StateGraph 정의 (ChatState, route_tools, build_graph) |
+| `utils/predictor.py` | ECLO 예측 모듈 (LightGBM 모델 로드, 피처 인코딩) |
+
+기준 문서: `docs/v1.2/app_improvement_proposal.md`
+스펙 문서: `specs/004-app-v12-upgrade/`
+
+---
+
+### v1.1.3
 
 **UI 간소화 및 버그 수정** - Tool Calling 피드백 위치 수정, 탭 구조 단순화
 
@@ -204,8 +254,10 @@ streamlit run app.py
 | **데이터 처리** | pandas 2.0+, numpy 1.24+ |
 | **시각화** | Plotly 5.17+, Folium 0.14+ |
 | **지도 연동** | streamlit-folium 0.15+ |
-| **AI** | Anthropic Claude 4.5 |
+| **AI** | Anthropic Claude 4.5, LangChain 0.3+, LangGraph 0.2+ |
+| **ML** | LightGBM (ECLO 예측 모델) |
 | **스펙 관리** | GitHub SpecKit |
+| **패키지 매니저** | uv (권장), pip |
 | **개발 도구** | Claude Code |
 
 ---
@@ -225,20 +277,27 @@ public_data/
 │   ├── 대구 보안등 정보.csv
 │   ├── 대구 어린이 보호 구역 정보.csv
 │   └── 대구 주차장 정보.csv
+├── model/                 # v1.2: ECLO 예측 모델
+│   ├── accident_lgbm_model.pkl  # LightGBM 모델
+│   ├── label_encoders.pkl       # 라벨 인코더
+│   └── feature_config.json      # 피처 설정
 ├── utils/                 # 유틸리티 모듈
-│   ├── chatbot.py        # AI 챗봇 로직
-│   ├── tools.py          # Tool Calling 도구
+│   ├── chatbot.py        # AI 챗봇 로직 (LangGraph 통합)
+│   ├── graph.py          # v1.2: LangGraph StateGraph 정의
+│   ├── predictor.py      # v1.2: ECLO 예측 모듈
+│   ├── tools.py          # Tool Calling 도구 (21개)
 │   ├── visualizer.py     # Plotly 시각화
 │   ├── geo.py            # Folium 지도
 │   ├── loader.py         # 데이터 로더
 │   └── narration.py      # 나레이션
 ├── docs/                  # 버전별 문서
 │   ├── constitution.md
-│   ├── v1.0/, v1.1/, v1.1.1/, v1.1.2/, v1.1.3/
+│   ├── v1.0/, v1.1/, v1.1.1/, v1.1.2/, v1.1.3/, v1.2/
 ├── specs/                 # SDD 스펙 산출물
 │   ├── 001-daegu-data-viz/
 │   ├── 002-app-v1-1-upgrade/
-│   └── 003-app-v111-upgrade/
+│   ├── 003-app-v111-upgrade/
+│   └── 004-app-v12-upgrade/
 └── material/              # 일차별 학습 자료
     ├── 1-3/              # 1~3일차
     ├── 3-7/              # 3~7일차
@@ -260,9 +319,11 @@ public_data/
 | `docs/v1.1.1/*.md` | v1.1.1 개선 제안서 (Tool Calling, 성능 최적화) |
 | `docs/v1.1.2/*.md` | v1.1.2 개선 제안서 (UX 개선, 분석 도구 확장) |
 | `docs/v1.1.3/*.md` | v1.1.3 개선 제안서 (UI 간소화, 버그 수정) |
+| `docs/v1.2/*.md` | v1.2 개선 제안서 (LangGraph 마이그레이션) |
 | `specs/001-daegu-data-viz/` | v1.0 스펙 산출물 (spec, plan, tasks) |
 | `specs/002-app-v1-1-upgrade/` | v1.1 스펙 산출물 |
 | `specs/003-app-v111-upgrade/` | v1.1.1 스펙 산출물 |
+| `specs/004-app-v12-upgrade/` | v1.2 스펙 산출물 (LangGraph, ECLO 예측) |
 | `material/` | 일차별 학습 자료 (아래 참조) |
 | `syllabus.md` | 전체 15일 커리큘럼 문서 |
 

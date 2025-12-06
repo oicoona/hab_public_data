@@ -1,359 +1,51 @@
 """
-Data analysis tools for Tool Calling in Claude chatbot.
+Data analysis tools for LangGraph-based AI chatbot.
 
-이 모듈은 Claude API의 Tool Use 기능을 위한 20개 데이터 분석 도구를 정의합니다.
-각 도구는 pandas DataFrame을 분석하여 결과를 문자열로 반환합니다.
-
-v1.1.2: 5개 추가 도구
-- analyze_missing_pattern: 결측값 패턴 분석 (MCAR, MAR, MNAR)
-- get_column_correlation_with_target: 타겟 컬럼과의 상관관계 분석
-- detect_data_types: 컬럼별 실제 데이터 타입 추론
-- get_temporal_pattern: 시간 관련 컬럼의 패턴 분석
-- summarize_categorical_distribution: 범주형 컬럼 분포 요약
+v1.2: LangChain @tool 데코레이터 형식으로 마이그레이션
+- 기존 20개 분석 도구 + 1개 ECLO 예측 도구
+- RunnableConfig를 통한 DataFrame 전달
 """
 import pandas as pd
 import numpy as np
-from typing import Any
+from typing import Any, Literal
+
+from langchain_core.tools import tool
+from langchain_core.runnables import RunnableConfig
 
 from utils.geo import detect_lat_lng_columns
 
 
 # ============================================================================
-# Tool Definitions (JSON Schema for Anthropic API)
+# Helper Functions
 # ============================================================================
 
-TOOLS = [
-    {
-        "name": "get_dataframe_info",
-        "description": "DataFrame 기본 정보를 반환합니다. 행/열 수, 컬럼명, 데이터 타입을 포함합니다.",
-        "input_schema": {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
-    },
-    {
-        "name": "get_column_statistics",
-        "description": "특정 수치형 컬럼의 통계 정보를 반환합니다. 평균, 중앙값, 표준편차, 최소/최대값 등을 포함합니다.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "column": {
-                    "type": "string",
-                    "description": "통계를 계산할 컬럼명"
-                }
-            },
-            "required": ["column"]
-        }
-    },
-    {
-        "name": "get_missing_values",
-        "description": "각 컬럼별 결측치 개수와 비율을 분석하여 반환합니다.",
-        "input_schema": {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
-    },
-    {
-        "name": "get_value_counts",
-        "description": "범주형 컬럼의 값별 개수를 반환합니다. 상위 N개만 표시할 수 있습니다.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "column": {
-                    "type": "string",
-                    "description": "값 분포를 확인할 컬럼명"
-                },
-                "top_n": {
-                    "type": "integer",
-                    "description": "상위 N개만 표시 (기본값: 20)"
-                }
-            },
-            "required": ["column"]
-        }
-    },
-    {
-        "name": "filter_dataframe",
-        "description": "주어진 조건에 맞는 행만 필터링하여 결과를 반환합니다.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "column": {
-                    "type": "string",
-                    "description": "필터링할 컬럼명"
-                },
-                "operator": {
-                    "type": "string",
-                    "enum": ["==", "!=", ">", "<", ">=", "<=", "contains"],
-                    "description": "비교 연산자"
-                },
-                "value": {
-                    "description": "비교할 값"
-                }
-            },
-            "required": ["column", "operator", "value"]
-        }
-    },
-    {
-        "name": "sort_dataframe",
-        "description": "특정 컬럼을 기준으로 데이터를 정렬하여 상위 결과를 반환합니다.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "column": {
-                    "type": "string",
-                    "description": "정렬 기준 컬럼명"
-                },
-                "ascending": {
-                    "type": "boolean",
-                    "description": "오름차순 정렬 여부 (기본값: true)"
-                },
-                "top_n": {
-                    "type": "integer",
-                    "description": "반환할 행 수 (기본값: 10)"
-                }
-            },
-            "required": ["column"]
-        }
-    },
-    {
-        "name": "get_correlation",
-        "description": "수치형 컬럼들 간의 상관관계를 분석하여 상관계수 행렬을 반환합니다.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "columns": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "상관관계를 분석할 컬럼 목록 (비어있으면 모든 수치형 컬럼)"
-                }
-            },
-            "required": []
-        }
-    },
-    {
-        "name": "group_by_aggregate",
-        "description": "특정 컬럼을 기준으로 그룹화하고 집계 연산을 수행합니다.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "group_column": {
-                    "type": "string",
-                    "description": "그룹화 기준 컬럼명"
-                },
-                "agg_column": {
-                    "type": "string",
-                    "description": "집계할 컬럼명"
-                },
-                "operation": {
-                    "type": "string",
-                    "enum": ["sum", "mean", "count", "min", "max", "median", "std"],
-                    "description": "집계 연산 종류"
-                }
-            },
-            "required": ["group_column", "agg_column", "operation"]
-        }
-    },
-    {
-        "name": "get_unique_values",
-        "description": "특정 컬럼의 고유값 목록과 개수를 반환합니다.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "column": {
-                    "type": "string",
-                    "description": "고유값을 확인할 컬럼명"
-                }
-            },
-            "required": ["column"]
-        }
-    },
-    {
-        "name": "get_date_range",
-        "description": "날짜 컬럼의 최소/최대 날짜와 기간을 분석하여 반환합니다.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "column": {
-                    "type": "string",
-                    "description": "날짜 컬럼명"
-                }
-            },
-            "required": ["column"]
-        }
-    },
-    {
-        "name": "get_outliers",
-        "description": "IQR(사분위수 범위) 기반으로 이상치를 탐지하여 반환합니다.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "column": {
-                    "type": "string",
-                    "description": "이상치를 탐지할 수치형 컬럼명"
-                },
-                "multiplier": {
-                    "type": "number",
-                    "description": "IQR 배수 (기본값: 1.5)"
-                }
-            },
-            "required": ["column"]
-        }
-    },
-    {
-        "name": "get_sample_rows",
-        "description": "데이터에서 샘플 행을 추출하여 반환합니다. 조건을 지정할 수 있습니다.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "n": {
-                    "type": "integer",
-                    "description": "추출할 샘플 수 (기본값: 5)"
-                },
-                "column": {
-                    "type": "string",
-                    "description": "조건을 적용할 컬럼명 (선택)"
-                },
-                "value": {
-                    "description": "필터링할 값 (선택)"
-                }
-            },
-            "required": []
-        }
-    },
-    {
-        "name": "calculate_percentile",
-        "description": "수치형 컬럼에서 특정 백분위수 값을 계산합니다.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "column": {
-                    "type": "string",
-                    "description": "백분위수를 계산할 컬럼명"
-                },
-                "percentile": {
-                    "type": "number",
-                    "description": "계산할 백분위수 (0-100)"
-                }
-            },
-            "required": ["column", "percentile"]
-        }
-    },
-    {
-        "name": "get_geo_bounds",
-        "description": "위경도 데이터의 지리적 범위(최소/최대 위도, 경도)를 반환합니다.",
-        "input_schema": {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
-    },
-    {
-        "name": "cross_tabulation",
-        "description": "두 범주형 컬럼 간의 교차표(빈도표)를 생성합니다.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "row_column": {
-                    "type": "string",
-                    "description": "행(row)으로 사용할 컬럼명"
-                },
-                "col_column": {
-                    "type": "string",
-                    "description": "열(column)으로 사용할 컬럼명"
-                },
-                "normalize": {
-                    "type": "boolean",
-                    "description": "비율로 정규화 여부 (기본값: false)"
-                }
-            },
-            "required": ["row_column", "col_column"]
-        }
-    },
-    # v1.1.2: 5개 추가 분석 도구
-    {
-        "name": "analyze_missing_pattern",
-        "description": "결측값 패턴을 분석하여 MCAR, MAR, MNAR 여부를 추정합니다. 결측값이 발생한 원인과 패턴을 파악합니다.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "column": {
-                    "type": "string",
-                    "description": "결측값 패턴을 분석할 컬럼명"
-                }
-            },
-            "required": ["column"]
-        }
-    },
-    {
-        "name": "get_column_correlation_with_target",
-        "description": "특정 타겟 컬럼과 다른 모든 수치형 컬럼들 간의 상관관계를 분석합니다.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "target_column": {
-                    "type": "string",
-                    "description": "타겟 컬럼명"
-                }
-            },
-            "required": ["target_column"]
-        }
-    },
-    {
-        "name": "detect_data_types",
-        "description": "컬럼별 실제 데이터 타입을 추론합니다. 숫자처럼 보이는 문자열, 날짜 형식 등을 감지합니다.",
-        "input_schema": {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
-    },
-    {
-        "name": "get_temporal_pattern",
-        "description": "시간/날짜 관련 컬럼의 패턴을 분석합니다. 월별, 요일별, 시간대별 분포를 확인합니다.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "column": {
-                    "type": "string",
-                    "description": "시간/날짜 컬럼명"
-                }
-            },
-            "required": ["column"]
-        }
-    },
-    {
-        "name": "summarize_categorical_distribution",
-        "description": "범주형 컬럼의 분포를 상세하게 요약합니다. 집중도, 편향성, 희귀 카테고리 등을 분석합니다.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "column": {
-                    "type": "string",
-                    "description": "범주형 컬럼명"
-                }
-            },
-            "required": ["column"]
-        }
-    }
-]
+def get_dataframe_from_config(config: RunnableConfig) -> pd.DataFrame:
+    """RunnableConfig에서 DataFrame을 추출합니다."""
+    configurable = config.get("configurable", {})
+    df = configurable.get("dataframe")
+    if df is None:
+        raise KeyError("현재 활성화된 데이터셋이 없습니다.")
+    return df
+
+
+def get_current_dataset_from_config(config: RunnableConfig) -> str:
+    """RunnableConfig에서 현재 데이터셋 이름을 추출합니다."""
+    configurable = config.get("configurable", {})
+    return configurable.get("current_dataset", "")
 
 
 # ============================================================================
-# Tool Handlers (T011-T025)
+# Data Analysis Tools (20개)
 # ============================================================================
 
-def get_dataframe_info(df: pd.DataFrame, **kwargs) -> str:
-    """
-    DataFrame 기본 정보를 반환합니다.
+@tool
+def get_dataframe_info(config: RunnableConfig) -> str:
+    """DataFrame 기본 정보를 반환합니다. 행/열 수, 컬럼명, 데이터 타입을 포함합니다."""
+    try:
+        df = get_dataframe_from_config(config)
+    except KeyError as e:
+        return str(e)
 
-    Parameters:
-        df (pd.DataFrame): 분석할 DataFrame
-
-    Returns:
-        str: DataFrame 정보 문자열
-    """
     if df.empty:
         return "데이터가 없습니다 (빈 DataFrame)."
 
@@ -373,17 +65,14 @@ def get_dataframe_info(df: pd.DataFrame, **kwargs) -> str:
     return "\n".join(info_lines)
 
 
-def get_column_statistics(df: pd.DataFrame, column: str, **kwargs) -> str:
-    """
-    특정 수치형 컬럼의 통계 정보를 반환합니다.
+@tool
+def get_column_statistics(column: str, config: RunnableConfig) -> str:
+    """특정 수치형 컬럼의 통계 정보를 반환합니다. 평균, 중앙값, 표준편차, 최소/최대값 등을 포함합니다."""
+    try:
+        df = get_dataframe_from_config(config)
+    except KeyError as e:
+        return str(e)
 
-    Parameters:
-        df (pd.DataFrame): 분석할 DataFrame
-        column (str): 통계를 계산할 컬럼명
-
-    Returns:
-        str: 통계 정보 문자열
-    """
     if column not in df.columns:
         return f"'{column}' 컬럼을 찾을 수 없습니다. 사용 가능한 컬럼: {', '.join(df.columns)}"
 
@@ -416,16 +105,14 @@ def get_column_statistics(df: pd.DataFrame, column: str, **kwargs) -> str:
     return "\n".join(lines)
 
 
-def get_missing_values(df: pd.DataFrame, **kwargs) -> str:
-    """
-    각 컬럼별 결측치 개수와 비율을 분석합니다.
+@tool
+def get_missing_values(config: RunnableConfig) -> str:
+    """각 컬럼별 결측치 개수와 비율을 분석하여 반환합니다."""
+    try:
+        df = get_dataframe_from_config(config)
+    except KeyError as e:
+        return str(e)
 
-    Parameters:
-        df (pd.DataFrame): 분석할 DataFrame
-
-    Returns:
-        str: 결측치 현황 문자열
-    """
     if df.empty:
         return "데이터가 없습니다 (빈 DataFrame)."
 
@@ -445,18 +132,14 @@ def get_missing_values(df: pd.DataFrame, **kwargs) -> str:
     return "\n".join(lines)
 
 
-def get_value_counts(df: pd.DataFrame, column: str, top_n: int = 20, **kwargs) -> str:
-    """
-    범주형 컬럼의 값별 개수를 반환합니다.
+@tool
+def get_value_counts(column: str, top_n: int = 20, config: RunnableConfig = None) -> str:
+    """범주형 컬럼의 값별 개수를 반환합니다. 상위 N개만 표시할 수 있습니다."""
+    try:
+        df = get_dataframe_from_config(config)
+    except KeyError as e:
+        return str(e)
 
-    Parameters:
-        df (pd.DataFrame): 분석할 DataFrame
-        column (str): 값 분포를 확인할 컬럼명
-        top_n (int): 상위 N개만 표시 (기본값: 20)
-
-    Returns:
-        str: 값 분포 문자열
-    """
     if column not in df.columns:
         return f"'{column}' 컬럼을 찾을 수 없습니다. 사용 가능한 컬럼: {', '.join(df.columns)}"
 
@@ -475,19 +158,19 @@ def get_value_counts(df: pd.DataFrame, column: str, top_n: int = 20, **kwargs) -
     return "\n".join(lines)
 
 
-def filter_dataframe(df: pd.DataFrame, column: str, operator: str, value: Any, **kwargs) -> str:
-    """
-    조건에 맞는 행만 필터링하여 결과를 반환합니다.
+@tool
+def filter_dataframe(
+    column: str,
+    operator: Literal["==", "!=", ">", "<", ">=", "<=", "contains"],
+    value: Any,
+    config: RunnableConfig
+) -> str:
+    """주어진 조건에 맞는 행만 필터링하여 결과를 반환합니다."""
+    try:
+        df = get_dataframe_from_config(config)
+    except KeyError as e:
+        return str(e)
 
-    Parameters:
-        df (pd.DataFrame): 분석할 DataFrame
-        column (str): 필터링할 컬럼명
-        operator (str): 비교 연산자
-        value: 비교할 값
-
-    Returns:
-        str: 필터링 결과 문자열
-    """
     if column not in df.columns:
         return f"'{column}' 컬럼을 찾을 수 없습니다. 사용 가능한 컬럼: {', '.join(df.columns)}"
 
@@ -524,19 +207,19 @@ def filter_dataframe(df: pd.DataFrame, column: str, operator: str, value: Any, *
         return f"필터링 중 오류 발생: {str(e)}"
 
 
-def sort_dataframe(df: pd.DataFrame, column: str, ascending: bool = True, top_n: int = 10, **kwargs) -> str:
-    """
-    특정 컬럼을 기준으로 데이터를 정렬합니다.
+@tool
+def sort_dataframe(
+    column: str,
+    ascending: bool = True,
+    top_n: int = 10,
+    config: RunnableConfig = None
+) -> str:
+    """특정 컬럼을 기준으로 데이터를 정렬하여 상위 결과를 반환합니다."""
+    try:
+        df = get_dataframe_from_config(config)
+    except KeyError as e:
+        return str(e)
 
-    Parameters:
-        df (pd.DataFrame): 분석할 DataFrame
-        column (str): 정렬 기준 컬럼명
-        ascending (bool): 오름차순 정렬 여부
-        top_n (int): 반환할 행 수
-
-    Returns:
-        str: 정렬 결과 문자열
-    """
     if column not in df.columns:
         return f"'{column}' 컬럼을 찾을 수 없습니다. 사용 가능한 컬럼: {', '.join(df.columns)}"
 
@@ -557,17 +240,14 @@ def sort_dataframe(df: pd.DataFrame, column: str, ascending: bool = True, top_n:
         return f"정렬 중 오류 발생: {str(e)}"
 
 
-def get_correlation(df: pd.DataFrame, columns: list[str] | None = None, **kwargs) -> str:
-    """
-    수치형 컬럼들 간의 상관관계를 분석합니다.
+@tool
+def get_correlation(columns: list[str] | None = None, config: RunnableConfig = None) -> str:
+    """수치형 컬럼들 간의 상관관계를 분석하여 상관계수 행렬을 반환합니다."""
+    try:
+        df = get_dataframe_from_config(config)
+    except KeyError as e:
+        return str(e)
 
-    Parameters:
-        df (pd.DataFrame): 분석할 DataFrame
-        columns (list[str] | None): 분석할 컬럼 목록
-
-    Returns:
-        str: 상관계수 행렬 문자열
-    """
     numeric_df = df.select_dtypes(include=[np.number])
 
     if numeric_df.empty:
@@ -593,28 +273,24 @@ def get_correlation(df: pd.DataFrame, columns: list[str] | None = None, **kwargs
     return "\n".join(lines)
 
 
-def group_by_aggregate(df: pd.DataFrame, group_column: str, agg_column: str, operation: str, **kwargs) -> str:
-    """
-    특정 컬럼을 기준으로 그룹화하고 집계 연산을 수행합니다.
+@tool
+def group_by_aggregate(
+    group_column: str,
+    agg_column: str,
+    operation: Literal["sum", "mean", "count", "min", "max", "median", "std"],
+    config: RunnableConfig
+) -> str:
+    """특정 컬럼을 기준으로 그룹화하고 집계 연산을 수행합니다."""
+    try:
+        df = get_dataframe_from_config(config)
+    except KeyError as e:
+        return str(e)
 
-    Parameters:
-        df (pd.DataFrame): 분석할 DataFrame
-        group_column (str): 그룹화 기준 컬럼명
-        agg_column (str): 집계할 컬럼명
-        operation (str): 집계 연산 종류
-
-    Returns:
-        str: 그룹별 집계 결과 문자열
-    """
     if group_column not in df.columns:
         return f"'{group_column}' 컬럼을 찾을 수 없습니다."
 
     if agg_column not in df.columns:
         return f"'{agg_column}' 컬럼을 찾을 수 없습니다."
-
-    valid_ops = ["sum", "mean", "count", "min", "max", "median", "std"]
-    if operation not in valid_ops:
-        return f"지원하지 않는 집계 연산입니다: {operation}. 지원: {', '.join(valid_ops)}"
 
     try:
         if operation == "count":
@@ -643,17 +319,14 @@ def group_by_aggregate(df: pd.DataFrame, group_column: str, agg_column: str, ope
         return f"집계 중 오류 발생: {str(e)}"
 
 
-def get_unique_values(df: pd.DataFrame, column: str, **kwargs) -> str:
-    """
-    특정 컬럼의 고유값 목록과 개수를 반환합니다.
+@tool
+def get_unique_values(column: str, config: RunnableConfig) -> str:
+    """특정 컬럼의 고유값 목록과 개수를 반환합니다."""
+    try:
+        df = get_dataframe_from_config(config)
+    except KeyError as e:
+        return str(e)
 
-    Parameters:
-        df (pd.DataFrame): 분석할 DataFrame
-        column (str): 고유값을 확인할 컬럼명
-
-    Returns:
-        str: 고유값 목록 문자열
-    """
     if column not in df.columns:
         return f"'{column}' 컬럼을 찾을 수 없습니다. 사용 가능한 컬럼: {', '.join(df.columns)}"
 
@@ -674,17 +347,14 @@ def get_unique_values(df: pd.DataFrame, column: str, **kwargs) -> str:
     return "\n".join(lines)
 
 
-def get_date_range(df: pd.DataFrame, column: str, **kwargs) -> str:
-    """
-    날짜 컬럼의 최소/최대 날짜와 기간을 분석합니다.
+@tool
+def get_date_range(column: str, config: RunnableConfig) -> str:
+    """날짜 컬럼의 최소/최대 날짜와 기간을 분석하여 반환합니다."""
+    try:
+        df = get_dataframe_from_config(config)
+    except KeyError as e:
+        return str(e)
 
-    Parameters:
-        df (pd.DataFrame): 분석할 DataFrame
-        column (str): 날짜 컬럼명
-
-    Returns:
-        str: 날짜 범위 정보 문자열
-    """
     if column not in df.columns:
         return f"'{column}' 컬럼을 찾을 수 없습니다."
 
@@ -714,18 +384,14 @@ def get_date_range(df: pd.DataFrame, column: str, **kwargs) -> str:
         return f"날짜 분석 중 오류 발생: {str(e)}"
 
 
-def get_outliers(df: pd.DataFrame, column: str, multiplier: float = 1.5, **kwargs) -> str:
-    """
-    IQR 기반으로 이상치를 탐지합니다.
+@tool
+def get_outliers(column: str, multiplier: float = 1.5, config: RunnableConfig = None) -> str:
+    """IQR(사분위수 범위) 기반으로 이상치를 탐지하여 반환합니다."""
+    try:
+        df = get_dataframe_from_config(config)
+    except KeyError as e:
+        return str(e)
 
-    Parameters:
-        df (pd.DataFrame): 분석할 DataFrame
-        column (str): 이상치를 탐지할 컬럼명
-        multiplier (float): IQR 배수 (기본값: 1.5)
-
-    Returns:
-        str: 이상치 정보 문자열
-    """
     if column not in df.columns:
         return f"'{column}' 컬럼을 찾을 수 없습니다."
 
@@ -767,19 +433,19 @@ def get_outliers(df: pd.DataFrame, column: str, multiplier: float = 1.5, **kwarg
     return "\n".join(lines)
 
 
-def get_sample_rows(df: pd.DataFrame, n: int = 5, column: str | None = None, value: Any = None, **kwargs) -> str:
-    """
-    데이터에서 샘플 행을 추출합니다.
+@tool
+def get_sample_rows(
+    n: int = 5,
+    column: str | None = None,
+    value: Any = None,
+    config: RunnableConfig = None
+) -> str:
+    """데이터에서 샘플 행을 추출하여 반환합니다. 조건을 지정할 수 있습니다."""
+    try:
+        df = get_dataframe_from_config(config)
+    except KeyError as e:
+        return str(e)
 
-    Parameters:
-        df (pd.DataFrame): 분석할 DataFrame
-        n (int): 추출할 샘플 수
-        column (str | None): 조건을 적용할 컬럼명
-        value: 필터링할 값
-
-    Returns:
-        str: 샘플 데이터 문자열
-    """
     if df.empty:
         return "데이터가 없습니다 (빈 DataFrame)."
 
@@ -807,18 +473,14 @@ def get_sample_rows(df: pd.DataFrame, n: int = 5, column: str | None = None, val
     return "\n".join(lines)
 
 
-def calculate_percentile(df: pd.DataFrame, column: str, percentile: float, **kwargs) -> str:
-    """
-    수치형 컬럼에서 특정 백분위수 값을 계산합니다.
+@tool
+def calculate_percentile(column: str, percentile: float, config: RunnableConfig) -> str:
+    """수치형 컬럼에서 특정 백분위수 값을 계산합니다."""
+    try:
+        df = get_dataframe_from_config(config)
+    except KeyError as e:
+        return str(e)
 
-    Parameters:
-        df (pd.DataFrame): 분석할 DataFrame
-        column (str): 백분위수를 계산할 컬럼명
-        percentile (float): 계산할 백분위수 (0-100)
-
-    Returns:
-        str: 백분위수 결과 문자열
-    """
     if column not in df.columns:
         return f"'{column}' 컬럼을 찾을 수 없습니다."
 
@@ -844,16 +506,14 @@ def calculate_percentile(df: pd.DataFrame, column: str, percentile: float, **kwa
     return "\n".join(lines)
 
 
-def get_geo_bounds(df: pd.DataFrame, **kwargs) -> str:
-    """
-    위경도 데이터의 지리적 범위를 반환합니다.
+@tool
+def get_geo_bounds(config: RunnableConfig) -> str:
+    """위경도 데이터의 지리적 범위(최소/최대 위도, 경도)를 반환합니다."""
+    try:
+        df = get_dataframe_from_config(config)
+    except KeyError as e:
+        return str(e)
 
-    Parameters:
-        df (pd.DataFrame): 분석할 DataFrame
-
-    Returns:
-        str: 지리적 범위 문자열
-    """
     lat_col, lng_col = detect_lat_lng_columns(df)
 
     if not lat_col or not lng_col:
@@ -886,19 +546,19 @@ def get_geo_bounds(df: pd.DataFrame, **kwargs) -> str:
     return "\n".join(lines)
 
 
-def cross_tabulation(df: pd.DataFrame, row_column: str, col_column: str, normalize: bool = False, **kwargs) -> str:
-    """
-    두 범주형 컬럼 간의 교차표를 생성합니다.
+@tool
+def cross_tabulation(
+    row_column: str,
+    col_column: str,
+    normalize: bool = False,
+    config: RunnableConfig = None
+) -> str:
+    """두 범주형 컬럼 간의 교차표(빈도표)를 생성합니다."""
+    try:
+        df = get_dataframe_from_config(config)
+    except KeyError as e:
+        return str(e)
 
-    Parameters:
-        df (pd.DataFrame): 분석할 DataFrame
-        row_column (str): 행으로 사용할 컬럼명
-        col_column (str): 열로 사용할 컬럼명
-        normalize (bool): 비율로 정규화 여부
-
-    Returns:
-        str: 교차표 문자열
-    """
     if row_column not in df.columns:
         return f"'{row_column}' 컬럼을 찾을 수 없습니다."
 
@@ -926,21 +586,14 @@ def cross_tabulation(df: pd.DataFrame, row_column: str, col_column: str, normali
         return f"교차표 생성 중 오류 발생: {str(e)}"
 
 
-# ============================================================================
-# v1.1.2 추가 도구 핸들러 (5개)
-# ============================================================================
+@tool
+def analyze_missing_pattern(column: str, config: RunnableConfig) -> str:
+    """결측값 패턴을 분석하여 MCAR, MAR, MNAR 여부를 추정합니다."""
+    try:
+        df = get_dataframe_from_config(config)
+    except KeyError as e:
+        return str(e)
 
-def analyze_missing_pattern(df: pd.DataFrame, column: str, **kwargs) -> str:
-    """
-    결측값 패턴을 분석하여 MCAR, MAR, MNAR 여부를 추정합니다.
-
-    Parameters:
-        df (pd.DataFrame): 분석할 DataFrame
-        column (str): 결측값 패턴을 분석할 컬럼명
-
-    Returns:
-        str: 결측값 패턴 분석 결과 문자열
-    """
     if column not in df.columns:
         return f"'{column}' 컬럼을 찾을 수 없습니다."
 
@@ -968,8 +621,7 @@ def analyze_missing_pattern(df: pd.DataFrame, column: str, **kwargs) -> str:
         numeric_cols.remove(column)
 
     correlations = []
-    for other_col in numeric_cols[:5]:  # 최대 5개 컬럼만 분석
-        # 결측 여부와 다른 컬럼 값 간의 상관관계
+    for other_col in numeric_cols[:5]:
         valid_mask = df[other_col].notna()
         if valid_mask.sum() > 10:
             missing_indicator = missing_mask.astype(int)
@@ -984,13 +636,13 @@ def analyze_missing_pattern(df: pd.DataFrame, column: str, **kwargs) -> str:
 
         if max_corr < 0.1:
             pattern_type = "MCAR (완전 무작위 결측)"
-            pattern_desc = "결측값이 다른 변수들과 거의 상관관계가 없습니다. 무작위로 발생한 것으로 추정됩니다."
+            pattern_desc = "결측값이 다른 변수들과 거의 상관관계가 없습니다."
         elif max_corr < 0.3:
             pattern_type = "MAR 가능성 (무작위 결측)"
-            pattern_desc = "결측값이 다른 변수들과 약한 상관관계를 보입니다. 관측된 다른 변수에 의존할 수 있습니다."
+            pattern_desc = "결측값이 다른 변수들과 약한 상관관계를 보입니다."
         else:
             pattern_type = "MNAR 가능성 (비무작위 결측)"
-            pattern_desc = "결측값이 다른 변수들과 상당한 상관관계를 보입니다. 결측 자체가 특정 패턴을 따를 수 있습니다."
+            pattern_desc = "결측값이 다른 변수들과 상당한 상관관계를 보입니다."
 
         lines.append(f"- **추정 유형**: {pattern_type}")
         lines.append(f"- **설명**: {pattern_desc}")
@@ -1001,39 +653,22 @@ def analyze_missing_pattern(df: pd.DataFrame, column: str, **kwargs) -> str:
     else:
         lines.append("- 상관관계 분석을 위한 수치형 컬럼이 부족합니다.")
 
-    # 결측값이 있는 행의 특성
-    missing_rows = df[missing_mask]
-    non_missing_rows = df[~missing_mask]
-
-    if len(numeric_cols) > 0:
-        lines.append(f"")
-        lines.append(f"### 결측/비결측 그룹 비교 (수치형 컬럼)")
-        for other_col in numeric_cols[:3]:
-            missing_mean = missing_rows[other_col].mean()
-            non_missing_mean = non_missing_rows[other_col].mean()
-            if not np.isnan(missing_mean) and not np.isnan(non_missing_mean):
-                diff_pct = ((missing_mean - non_missing_mean) / non_missing_mean * 100) if non_missing_mean != 0 else 0
-                lines.append(f"- {other_col}: 결측 그룹 평균={missing_mean:.2f}, 비결측 그룹 평균={non_missing_mean:.2f} (차이: {diff_pct:+.1f}%)")
-
     return "\n".join(lines)
 
 
-def get_column_correlation_with_target(df: pd.DataFrame, target_column: str, **kwargs) -> str:
-    """
-    특정 타겟 컬럼과 다른 모든 수치형 컬럼들 간의 상관관계를 분석합니다.
+@tool
+def get_column_correlation_with_target(target_column: str, config: RunnableConfig) -> str:
+    """특정 타겟 컬럼과 다른 모든 수치형 컬럼들 간의 상관관계를 분석합니다."""
+    try:
+        df = get_dataframe_from_config(config)
+    except KeyError as e:
+        return str(e)
 
-    Parameters:
-        df (pd.DataFrame): 분석할 DataFrame
-        target_column (str): 타겟 컬럼명
-
-    Returns:
-        str: 상관관계 분석 결과 문자열
-    """
     if target_column not in df.columns:
         return f"'{target_column}' 컬럼을 찾을 수 없습니다."
 
     if not pd.api.types.is_numeric_dtype(df[target_column]):
-        return f"'{target_column}' 컬럼은 수치형이 아닙니다. 상관관계 분석에는 수치형 컬럼이 필요합니다."
+        return f"'{target_column}' 컬럼은 수치형이 아닙니다."
 
     numeric_df = df.select_dtypes(include=[np.number])
     if len(numeric_df.columns) < 2:
@@ -1049,7 +684,6 @@ def get_column_correlation_with_target(df: pd.DataFrame, target_column: str, **k
     if not correlations:
         return "상관관계를 계산할 수 있는 컬럼이 없습니다."
 
-    # 상관계수 절대값 기준 정렬
     correlations.sort(key=lambda x: abs(x[1]), reverse=True)
 
     lines = [
@@ -1059,41 +693,30 @@ def get_column_correlation_with_target(df: pd.DataFrame, target_column: str, **k
     ]
 
     for idx, (col, corr) in enumerate(correlations, 1):
-        # 상관관계 강도 해석
         abs_corr = abs(corr)
         if abs_corr >= 0.7:
-            strength = "🔴 강함"
+            strength = "강함"
         elif abs_corr >= 0.4:
-            strength = "🟡 중간"
+            strength = "중간"
         elif abs_corr >= 0.2:
-            strength = "🟢 약함"
+            strength = "약함"
         else:
-            strength = "⚪ 매우 약함"
+            strength = "매우 약함"
 
         direction = "양의 상관" if corr > 0 else "음의 상관"
         lines.append(f"{idx}. {col}: {corr:+.3f} ({strength}, {direction})")
 
-    # 요약
-    strong_corrs = [c for c in correlations if abs(c[1]) >= 0.4]
-    if strong_corrs:
-        lines.append(f"")
-        lines.append(f"### 요약")
-        lines.append(f"- 중간 이상 상관관계: {len(strong_corrs)}개 컬럼")
-        lines.append(f"- 가장 강한 상관: {correlations[0][0]} ({correlations[0][1]:+.3f})")
-
     return "\n".join(lines)
 
 
-def detect_data_types(df: pd.DataFrame, **kwargs) -> str:
-    """
-    컬럼별 실제 데이터 타입을 추론합니다.
+@tool
+def detect_data_types(config: RunnableConfig) -> str:
+    """컬럼별 실제 데이터 타입을 추론합니다. 숫자처럼 보이는 문자열, 날짜 형식 등을 감지합니다."""
+    try:
+        df = get_dataframe_from_config(config)
+    except KeyError as e:
+        return str(e)
 
-    Parameters:
-        df (pd.DataFrame): 분석할 DataFrame
-
-    Returns:
-        str: 데이터 타입 추론 결과 문자열
-    """
     if df.empty:
         return "데이터가 없습니다 (빈 DataFrame)."
 
@@ -1112,7 +735,6 @@ def detect_data_types(df: pd.DataFrame, **kwargs) -> str:
             inferred_type = "알 수 없음"
             note = "모든 값이 결측"
         elif pd.api.types.is_numeric_dtype(df[col]):
-            # 정수/실수 구분
             if pd.api.types.is_integer_dtype(df[col]):
                 unique_ratio = df[col].nunique() / len(sample)
                 if unique_ratio < 0.05:
@@ -1128,12 +750,10 @@ def detect_data_types(df: pd.DataFrame, **kwargs) -> str:
             inferred_type = "날짜/시간"
             note = ""
         else:
-            # 문자열 타입 세부 분석
             sample_vals = sample.astype(str).head(100)
             inferred_type = None
             note = ""
 
-            # 날짜 형식 체크
             try:
                 pd.to_datetime(sample_vals, errors='raise')
                 inferred_type = "날짜 (문자열)"
@@ -1141,7 +761,6 @@ def detect_data_types(df: pd.DataFrame, **kwargs) -> str:
             except (ValueError, TypeError):
                 pass
 
-            # 숫자 형식 체크
             if inferred_type is None:
                 try:
                     pd.to_numeric(sample_vals, errors='raise')
@@ -1150,7 +769,6 @@ def detect_data_types(df: pd.DataFrame, **kwargs) -> str:
                 except (ValueError, TypeError):
                     pass
 
-            # 일반 범주형
             if inferred_type is None:
                 unique_count = df[col].nunique()
                 if unique_count <= 20:
@@ -1168,17 +786,14 @@ def detect_data_types(df: pd.DataFrame, **kwargs) -> str:
     return "\n".join(lines)
 
 
-def get_temporal_pattern(df: pd.DataFrame, column: str, **kwargs) -> str:
-    """
-    시간/날짜 관련 컬럼의 패턴을 분석합니다.
+@tool
+def get_temporal_pattern(column: str, config: RunnableConfig) -> str:
+    """시간/날짜 관련 컬럼의 패턴을 분석합니다. 월별, 요일별, 시간대별 분포를 확인합니다."""
+    try:
+        df = get_dataframe_from_config(config)
+    except KeyError as e:
+        return str(e)
 
-    Parameters:
-        df (pd.DataFrame): 분석할 DataFrame
-        column (str): 시간/날짜 컬럼명
-
-    Returns:
-        str: 시간 패턴 분석 결과 문자열
-    """
     if column not in df.columns:
         return f"'{column}' 컬럼을 찾을 수 없습니다."
 
@@ -1225,32 +840,20 @@ def get_temporal_pattern(df: pd.DataFrame, column: str, **kwargs) -> str:
             pct = count / len(valid_dates) * 100
             lines.append(f"- {day_names[day]}: {count:,}개 ({pct:.1f}%)")
 
-        # 시간대별 분포 (시간 정보가 있는 경우)
-        if valid_dates.dt.hour.nunique() > 1:
-            hour_dist = valid_dates.dt.hour.value_counts().sort_index()
-            lines.append(f"")
-            lines.append(f"### 시간대별 분포 (상위 5개)")
-            for hour, count in hour_dist.head(5).items():
-                pct = count / len(valid_dates) * 100
-                lines.append(f"- {hour}시: {count:,}개 ({pct:.1f}%)")
-
         return "\n".join(lines)
 
     except Exception as e:
         return f"시간 패턴 분석 중 오류 발생: {str(e)}"
 
 
-def summarize_categorical_distribution(df: pd.DataFrame, column: str, **kwargs) -> str:
-    """
-    범주형 컬럼의 분포를 상세하게 요약합니다.
+@tool
+def summarize_categorical_distribution(column: str, config: RunnableConfig) -> str:
+    """범주형 컬럼의 분포를 상세하게 요약합니다. 집중도, 편향성, 희귀 카테고리 등을 분석합니다."""
+    try:
+        df = get_dataframe_from_config(config)
+    except KeyError as e:
+        return str(e)
 
-    Parameters:
-        df (pd.DataFrame): 분석할 DataFrame
-        column (str): 범주형 컬럼명
-
-    Returns:
-        str: 범주형 분포 요약 문자열
-    """
     if column not in df.columns:
         return f"'{column}' 컬럼을 찾을 수 없습니다."
 
@@ -1268,7 +871,6 @@ def summarize_categorical_distribution(df: pd.DataFrame, column: str, **kwargs) 
         f"- 결측값: {missing_count:,}개 ({missing_count/total*100:.1f}%)"
     ]
 
-    # 집중도 분석
     if unique_count > 0:
         top1_pct = value_counts.iloc[0] / (total - missing_count) * 100 if (total - missing_count) > 0 else 0
         top3_pct = value_counts.head(3).sum() / (total - missing_count) * 100 if (total - missing_count) > 0 else 0
@@ -1278,28 +880,15 @@ def summarize_categorical_distribution(df: pd.DataFrame, column: str, **kwargs) 
         lines.append(f"- 최빈값 비율: {top1_pct:.1f}% ({value_counts.index[0]})")
         lines.append(f"- 상위 3개 비율: {top3_pct:.1f}%")
 
-        # 편향성 판단
         if top1_pct > 80:
-            bias = "🔴 매우 편향됨 (단일 값이 80% 이상)"
+            bias = "매우 편향됨 (단일 값이 80% 이상)"
         elif top1_pct > 50:
-            bias = "🟡 편향됨 (단일 값이 50% 이상)"
+            bias = "편향됨 (단일 값이 50% 이상)"
         elif top3_pct > 80:
-            bias = "🟡 약간 편향됨 (상위 3개가 80% 이상)"
+            bias = "약간 편향됨 (상위 3개가 80% 이상)"
         else:
-            bias = "🟢 균형적 분포"
+            bias = "균형적 분포"
         lines.append(f"- 편향성: {bias}")
-
-    # 희귀 카테고리 분석
-    rare_threshold = total * 0.01  # 1% 미만
-    rare_categories = value_counts[value_counts < rare_threshold]
-    if len(rare_categories) > 0:
-        lines.append(f"")
-        lines.append(f"### 희귀 카테고리 (1% 미만)")
-        lines.append(f"- 희귀 카테고리 수: {len(rare_categories)}개")
-        lines.append(f"- 희귀 카테고리 합계: {rare_categories.sum():,}개 ({rare_categories.sum()/total*100:.2f}%)")
-        if len(rare_categories) <= 10:
-            for cat, count in rare_categories.items():
-                lines.append(f"  - {cat}: {count}개")
 
     # 상위 카테고리
     lines.append(f"")
@@ -1312,53 +901,166 @@ def summarize_categorical_distribution(df: pd.DataFrame, column: str, **kwargs) 
 
 
 # ============================================================================
-# Tool Dispatcher (T026)
+# ECLO Prediction Tool (1개)
 # ============================================================================
 
-# 도구 이름과 핸들러 함수 매핑
-TOOL_HANDLERS = {
-    "get_dataframe_info": get_dataframe_info,
-    "get_column_statistics": get_column_statistics,
-    "get_missing_values": get_missing_values,
-    "get_value_counts": get_value_counts,
-    "filter_dataframe": filter_dataframe,
-    "sort_dataframe": sort_dataframe,
-    "get_correlation": get_correlation,
-    "group_by_aggregate": group_by_aggregate,
-    "get_unique_values": get_unique_values,
-    "get_date_range": get_date_range,
-    "get_outliers": get_outliers,
-    "get_sample_rows": get_sample_rows,
-    "calculate_percentile": calculate_percentile,
-    "get_geo_bounds": get_geo_bounds,
-    "cross_tabulation": cross_tabulation,
-    # v1.1.2: 5개 추가 도구
-    "analyze_missing_pattern": analyze_missing_pattern,
-    "get_column_correlation_with_target": get_column_correlation_with_target,
-    "detect_data_types": detect_data_types,
-    "get_temporal_pattern": get_temporal_pattern,
-    "summarize_categorical_distribution": summarize_categorical_distribution,
-}
+@tool
+def predict_eclo(
+    기상상태: str,
+    노면상태: str,
+    도로형태: str,
+    사고유형: str,
+    시간대: str,
+    시군구: str,
+    요일: str,
+    사고시: int,
+    사고연: int,
+    사고월: int,
+    사고일: int,
+    config: RunnableConfig
+) -> str:
+    """
+    ECLO(Equivalent Casualty Loss of life)를 예측합니다.
+
+    이 도구는 train 또는 test 데이터셋이 활성화된 경우에만 사용 가능합니다.
+    모든 11개 피처가 제공되어야 예측이 가능합니다.
+
+    피처별 유효 값:
+    - 기상상태: 맑음, 흐림, 비, 눈, 안개 등
+    - 노면상태: 건조, 젖음/습기, 적설, 결빙 등
+    - 도로형태: 단일로, 교차로, 횡단보도 등
+    - 사고유형: 차대차, 차대사람, 차량단독 등
+    - 시간대: 새벽, 아침, 낮, 저녁, 밤
+    - 시군구: 대구 시군구명
+    - 요일: 월요일~일요일
+    - 사고시: 0-23 (시간)
+    - 사고연: 연도 (예: 2023)
+    - 사고월: 1-12
+    - 사고일: 1-31
+
+    사용자가 피처 정보를 충분히 제공하지 않았다면,
+    이 도구를 호출하기 전에 추가 정보를 요청하세요.
+    """
+    # 데이터셋 조건 검증
+    current_dataset = get_current_dataset_from_config(config)
+    if current_dataset not in ["train", "test"]:
+        return "ECLO 예측은 train 또는 test 데이터셋에서만 사용 가능합니다. 현재 데이터셋에서는 일반 데이터 분석 기능만 사용할 수 있습니다."
+
+    # predictor 모듈 import 및 예측 실행
+    try:
+        from utils.predictor import predict_eclo_value, interpret_eclo
+
+        features = {
+            "기상상태": 기상상태,
+            "노면상태": 노면상태,
+            "도로형태": 도로형태,
+            "사고유형": 사고유형,
+            "시간대": 시간대,
+            "시군구": 시군구,
+            "요일": 요일,
+            "사고시": 사고시,
+            "사고연": 사고연,
+            "사고월": 사고월,
+            "사고일": 사고일,
+        }
+
+        eclo_value = predict_eclo_value(features)
+        interpretation = interpret_eclo(eclo_value)
+
+        lines = [
+            f"## ECLO 예측 결과",
+            f"",
+            f"**예측된 ECLO 값**: {eclo_value:.4f}",
+            f"",
+            f"**해석**: {interpretation}",
+            f"",
+            f"### 입력된 피처",
+            f"- 기상상태: {기상상태}",
+            f"- 노면상태: {노면상태}",
+            f"- 도로형태: {도로형태}",
+            f"- 사고유형: {사고유형}",
+            f"- 시간대: {시간대}",
+            f"- 시군구: {시군구}",
+            f"- 요일: {요일}",
+            f"- 사고 시각: {사고연}년 {사고월}월 {사고일}일 {사고시}시"
+        ]
+
+        return "\n".join(lines)
+
+    except FileNotFoundError as e:
+        return f"ECLO 예측 모델을 찾을 수 없습니다: {str(e)}"
+    except ValueError as e:
+        return f"피처 값 오류: {str(e)}"
+    except Exception as e:
+        return f"ECLO 예측 중 오류가 발생했습니다: {str(e)}"
 
 
+# ============================================================================
+# Tool Export
+# ============================================================================
+
+def get_all_tools() -> list:
+    """모든 도구 리스트를 반환합니다."""
+    return [
+        # 데이터 분석 도구 (20개)
+        get_dataframe_info,
+        get_column_statistics,
+        get_missing_values,
+        get_value_counts,
+        filter_dataframe,
+        sort_dataframe,
+        get_correlation,
+        group_by_aggregate,
+        get_unique_values,
+        get_date_range,
+        get_outliers,
+        get_sample_rows,
+        calculate_percentile,
+        get_geo_bounds,
+        cross_tabulation,
+        analyze_missing_pattern,
+        get_column_correlation_with_target,
+        detect_data_types,
+        get_temporal_pattern,
+        summarize_categorical_distribution,
+        # ECLO 예측 도구 (1개)
+        predict_eclo,
+    ]
+
+
+# ============================================================================
+# Legacy Support (Backward Compatibility)
+# ============================================================================
+
+# 기존 코드와의 호환성을 위해 TOOLS 리스트 유지 (deprecated)
+TOOLS = [
+    {
+        "name": tool.name,
+        "description": tool.description,
+        "input_schema": tool.args_schema.schema() if hasattr(tool, 'args_schema') and tool.args_schema else {"type": "object", "properties": {}}
+    }
+    for tool in get_all_tools()
+]
+
+# 기존 execute_tool 함수 (deprecated, LangGraph에서는 ToolNode 사용)
 def execute_tool(tool_name: str, tool_input: dict, df: pd.DataFrame) -> str:
     """
-    도구를 실행하고 결과를 반환합니다.
+    도구를 실행하고 결과를 반환합니다. (Legacy support)
 
-    Parameters:
-        tool_name (str): 실행할 도구 이름
-        tool_input (dict): 도구 입력 파라미터
-        df (pd.DataFrame): 분석할 DataFrame
-
-    Returns:
-        str: 도구 실행 결과 문자열
+    이 함수는 기존 코드와의 호환성을 위해 유지됩니다.
+    새로운 코드에서는 LangGraph ToolNode를 사용하세요.
     """
-    if tool_name not in TOOL_HANDLERS:
+    tools_map = {t.name: t for t in get_all_tools()}
+
+    if tool_name not in tools_map:
         return f"알 수 없는 도구입니다: {tool_name}"
 
     try:
-        handler = TOOL_HANDLERS[tool_name]
-        result = handler(df, **tool_input)
-        return result
+        # RunnableConfig 형식으로 DataFrame 전달
+        config = {"configurable": {"dataframe": df, "current_dataset": ""}}
+        tool_func = tools_map[tool_name]
+
+        # 도구 호출
+        return tool_func.invoke({**tool_input, "config": config})
     except Exception as e:
         return f"도구 실행 중 오류가 발생했습니다: {str(e)}"

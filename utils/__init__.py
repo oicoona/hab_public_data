@@ -1,12 +1,14 @@
 """
-Utility modules for Daegu Public Data Visualization v1.1.1.
+Utility modules for Daegu Public Data Visualization v1.2.
 
 Modules:
 - loader: CSV data loading with encoding fallback and caching
 - geo: Geospatial utilities for coordinate detection and distance calculations
 - visualizer: Plotly charts and Folium maps generation
-- chatbot: Anthropic Claude chatbot for data Q&A with Tool Calling
-- tools: 15 data analysis tools for Tool Calling
+- chatbot: Anthropic Claude chatbot with LangGraph integration
+- tools: 21 data analysis tools for LangGraph Tool Calling
+- graph: LangGraph StateGraph definitions
+- predictor: ECLO prediction with LightGBM model
 """
 from utils.loader import (
     read_csv_safe,
@@ -39,12 +41,27 @@ from utils.chatbot import (
     create_chat_response_with_tools,
     stream_chat_response_with_tools,
     handle_chat_error,
-    validate_api_key
+    validate_api_key,
+    # v1.2: LangGraph 함수
+    create_langgraph_model,
+    run_langgraph_chat,
+    stream_langgraph_chat
 )
 from utils.tools import (
     TOOLS,
     execute_tool,
-    TOOL_HANDLERS
+    get_all_tools  # v1.2: 새 함수
+)
+from utils.graph import (
+    ChatState,
+    route_tools,
+    build_graph,
+    astream_graph_events
+)
+from utils.predictor import (
+    predict_eclo_value,
+    interpret_eclo,
+    get_valid_values
 )
 
 __all__ = [
@@ -77,8 +94,20 @@ __all__ = [
     'stream_chat_response_with_tools',
     'handle_chat_error',
     'validate_api_key',
+    'create_langgraph_model',
+    'run_langgraph_chat',
+    'stream_langgraph_chat',
     # tools
     'TOOLS',
     'execute_tool',
-    'TOOL_HANDLERS'
+    'get_all_tools',
+    # graph (v1.2)
+    'ChatState',
+    'route_tools',
+    'build_graph',
+    'astream_graph_events',
+    # predictor (v1.2)
+    'predict_eclo_value',
+    'interpret_eclo',
+    'get_valid_values'
 ]

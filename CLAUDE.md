@@ -5,6 +5,8 @@ Auto-generated from all feature plans. Last updated: 2025-11-21
 ## Active Technologies
 - Python 3.12 (현재 환경), Python 3.10+ 호환 + Streamlit 1.28.0+, pandas 2.0.0+, numpy 1.24.0+, plotly 5.17.0+, folium 0.14.0+, streamlit-folium 0.15.0+, anthropic (신규) (002-app-v1-1-upgrade)
 - N/A (파일 기반, 사용자 업로드 CSV) (002-app-v1-1-upgrade)
+- Python 3.10+ (현재 환경 Python 3.12 호환) (004-app-v12-upgrade)
+- 파일 기반 (CSV 업로드, session_state 캐싱), model/ 디렉토리 (pkl 파일) (004-app-v12-upgrade)
 
 - Python 3.10+ + Streamlit, pandas, numpy, plotly, folium, streamlit-folium (001-daegu-data-viz)
 
@@ -24,10 +26,10 @@ cd src [ONLY COMMANDS FOR ACTIVE TECHNOLOGIES][ONLY COMMANDS FOR ACTIVE TECHNOLO
 Python 3.10+: Follow standard conventions
 
 ## Recent Changes
+- 004-app-v12-upgrade: Added Python 3.10+ (현재 환경 Python 3.12 호환)
+- 004-app-v12-upgrade: Added Python 3.10+ (현재 환경 Python 3.12 호환)
 - 001-app-v111-upgrade: Added [if applicable, e.g., PostgreSQL, CoreData, files or N/A]
-- 002-app-v1-1-upgrade: Added Python 3.12 (현재 환경), Python 3.10+ 호환 + Streamlit 1.28.0+, pandas 2.0.0+, numpy 1.24.0+, plotly 5.17.0+, folium 0.14.0+, streamlit-folium 0.15.0+, anthropic (신규)
 
-- 001-daegu-data-viz: Added Python 3.10+ + Streamlit, pandas, numpy, plotly, folium, streamlit-folium
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->

@@ -1,15 +1,26 @@
 """
-Anthropic Claude chatbot module for data Q&A.
+LangGraph-based AI chatbot module for data Q&A.
+
+v1.2: LangGraph StateGraph 기반 Tool Calling
+- 기존 Anthropic API 직접 호출 → LangGraph 워크플로우
+- astream_events를 통한 스트리밍 지원
 """
 import time
+import asyncio
 import pandas as pd
+from typing import Generator, AsyncGenerator
+
 from anthropic import Anthropic, APIError, APIConnectionError, RateLimitError
-from utils.tools import TOOLS, execute_tool
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_anthropic import ChatAnthropic
+
+from utils.tools import get_all_tools, TOOLS, execute_tool
+from utils.graph import ChatState, build_graph
 
 # Maximum iterations for tool calling loop
 MAX_TOOL_ITERATIONS = 3
 
-# System prompt for data analysis (T037)
+# System prompt for data analysis
 SYSTEM_PROMPT = """당신은 데이터 분석 전문가입니다. 사용자가 업로드한 CSV 데이터셋에 대한 질문에 답변합니다.
 
 핵심 역할:
@@ -27,12 +38,15 @@ SYSTEM_PROMPT = """당신은 데이터 분석 전문가입니다. 사용자가 �
 주의사항:
 - 데이터에 없는 정보는 추측하지 않음
 - 개인정보 보호 관련 민감 데이터 언급 자제
-- 시각화 코드 요청 시 Plotly 기반 예시 제공"""
+- 시각화 코드 요청 시 Plotly 기반 예시 제공
+
+중요: 데이터 분석 질문에 답변할 때는 제공된 도구(tools)를 사용하여 정확한 정보를 얻으세요.
+데이터와 관련 없는 일반 질문에는 도구 없이 직접 답변해도 됩니다."""
 
 
 def create_data_context(df: pd.DataFrame, dataset_name: str) -> str:
     """
-    Create context string from DataFrame for AI prompts. (T038)
+    Create context string from DataFrame for AI prompts.
 
     Parameters:
         df (pd.DataFrame): Dataset to analyze
@@ -41,11 +55,9 @@ def create_data_context(df: pd.DataFrame, dataset_name: str) -> str:
     Returns:
         str: Formatted context string
     """
-    # Basic info
     row_count = len(df)
     col_count = len(df.columns)
 
-    # Column info
     col_info = []
     for col in df.columns:
         dtype = str(df[col].dtype)
@@ -67,7 +79,6 @@ def create_data_context(df: pd.DataFrame, dataset_name: str) -> str:
 
         col_info.append(f"  - {col} ({dtype}): {stats}, 결측값 {missing_pct:.1f}%")
 
-    # Sample data (first 3 rows as string)
     sample = df.head(3).to_string(index=False, max_colwidth=30)
 
     context = f"""## 데이터셋 정보: {dataset_name}
@@ -87,53 +98,9 @@ def create_data_context(df: pd.DataFrame, dataset_name: str) -> str:
     return context
 
 
-def create_chat_response(
-    client: Anthropic,
-    model: str,
-    messages: list[dict],
-    data_context: str,
-    max_tokens: int = 2048
-) -> tuple[str, dict]:
-    """
-    Create chat response using Anthropic API. (T039)
-
-    Parameters:
-        client: Anthropic client instance
-        model (str): Model ID (e.g., 'claude-sonnet-4-20250514')
-        messages (list[dict]): Conversation history
-        data_context (str): Data context from create_data_context()
-        max_tokens (int): Maximum tokens in response
-
-    Returns:
-        tuple[str, dict]: (response_text, usage_info)
-            usage_info: {'input_tokens': int, 'output_tokens': int}
-    """
-    # Combine system prompt with data context
-    full_system = f"{SYSTEM_PROMPT}\n\n{data_context}"
-
-    # Create API request
-    response = client.messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        system=full_system,
-        messages=messages
-    )
-
-    # Extract response text
-    response_text = response.content[0].text
-
-    # Extract usage info
-    usage_info = {
-        'input_tokens': response.usage.input_tokens,
-        'output_tokens': response.usage.output_tokens
-    }
-
-    return response_text, usage_info
-
-
 def handle_chat_error(error: Exception) -> str:
     """
-    Handle API errors and return user-friendly message. (T040)
+    Handle API errors and return user-friendly message.
 
     Parameters:
         error: Exception from API call
@@ -169,8 +136,262 @@ def validate_api_key(api_key: str) -> bool:
     """
     if not api_key:
         return False
-    # Anthropic keys typically start with 'sk-ant-'
     return api_key.startswith('sk-ant-') and len(api_key) > 20
+
+
+# ============================================================================
+# LangGraph-based Implementation (v1.2)
+# ============================================================================
+
+def create_langgraph_model(api_key: str, model: str = "claude-sonnet-4-20250514") -> ChatAnthropic:
+    """
+    LangChain ChatAnthropic 모델을 생성합니다.
+
+    Parameters:
+        api_key: Anthropic API Key
+        model: 모델 ID
+
+    Returns:
+        ChatAnthropic 인스턴스
+    """
+    return ChatAnthropic(
+        api_key=api_key,
+        model=model,
+        max_tokens=4096,
+    )
+
+
+def run_langgraph_chat(
+    api_key: str,
+    model: str,
+    messages: list[dict],
+    data_context: str,
+    df: pd.DataFrame,
+    dataset_name: str = ""
+) -> tuple[str, dict]:
+    """
+    LangGraph를 사용하여 챗봇 응답을 생성합니다.
+
+    Parameters:
+        api_key: Anthropic API Key
+        model: 모델 ID
+        messages: 대화 이력
+        data_context: 데이터 컨텍스트
+        df: DataFrame
+        dataset_name: 데이터셋 이름
+
+    Returns:
+        tuple[str, dict]: (응답 텍스트, 사용량 정보)
+    """
+    try:
+        # LangChain 모델 생성
+        llm = create_langgraph_model(api_key, model)
+
+        # 도구 가져오기
+        tools = get_all_tools()
+
+        # 시스템 프롬프트 구성
+        full_system = f"{SYSTEM_PROMPT}\n\n{data_context}"
+
+        # 그래프 빌드
+        graph = build_graph(llm, tools, full_system)
+
+        # 메시지 변환
+        langchain_messages = []
+        for msg in messages:
+            if msg["role"] == "user":
+                langchain_messages.append(HumanMessage(content=msg["content"]))
+            elif msg["role"] == "assistant":
+                langchain_messages.append(AIMessage(content=msg["content"]))
+
+        # 상태 초기화
+        state = ChatState(
+            messages=langchain_messages,
+            current_dataset=dataset_name
+        )
+
+        # RunnableConfig 설정
+        config = {
+            "configurable": {
+                "dataframe": df,
+                "current_dataset": dataset_name,
+            }
+        }
+
+        # 그래프 실행
+        result = graph.invoke(state, config=config)
+
+        # 마지막 AI 메시지 추출
+        final_messages = result.get("messages", [])
+        response_text = ""
+        for msg in reversed(final_messages):
+            if isinstance(msg, AIMessage) and msg.content:
+                response_text = msg.content
+                break
+
+        # 사용량 정보 (LangGraph에서는 직접 추적하지 않음)
+        usage_info = {"input_tokens": 0, "output_tokens": 0}
+
+        return response_text, usage_info
+
+    except Exception as e:
+        error_msg = handle_chat_error(e)
+        return error_msg, {"input_tokens": 0, "output_tokens": 0}
+
+
+def stream_langgraph_chat(
+    api_key: str,
+    model: str,
+    messages: list[dict],
+    data_context: str,
+    df: pd.DataFrame,
+    dataset_name: str = ""
+) -> Generator:
+    """
+    LangGraph를 사용하여 스트리밍 응답을 생성합니다.
+
+    Parameters:
+        api_key: Anthropic API Key
+        model: 모델 ID
+        messages: 대화 이력
+        data_context: 데이터 컨텍스트
+        df: DataFrame
+        dataset_name: 데이터셋 이름
+
+    Yields:
+        str 또는 dict: 텍스트 청크 또는 이벤트 딕셔너리
+    """
+    try:
+        # LangChain 모델 생성
+        llm = create_langgraph_model(api_key, model)
+
+        # 도구 가져오기
+        tools = get_all_tools()
+
+        # 시스템 프롬프트 구성
+        full_system = f"{SYSTEM_PROMPT}\n\n{data_context}"
+
+        # 그래프 빌드
+        graph = build_graph(llm, tools, full_system)
+
+        # 메시지 변환
+        langchain_messages = []
+        for msg in messages:
+            if msg["role"] == "user":
+                langchain_messages.append(HumanMessage(content=msg["content"]))
+            elif msg["role"] == "assistant":
+                langchain_messages.append(AIMessage(content=msg["content"]))
+
+        # 상태 초기화
+        state = ChatState(
+            messages=langchain_messages,
+            current_dataset=dataset_name
+        )
+
+        # RunnableConfig 설정
+        config = {
+            "configurable": {
+                "dataframe": df,
+                "current_dataset": dataset_name,
+            }
+        }
+
+        # 비동기 스트리밍을 동기로 래핑
+        async def async_stream():
+            final_text = ""
+            tool_count = 0
+
+            async for event in graph.astream_events(state, config=config, version="v2"):
+                event_type = event.get("event", "")
+
+                if event_type == "on_chat_model_stream":
+                    chunk = event.get("data", {}).get("chunk")
+                    if chunk and hasattr(chunk, "content") and chunk.content:
+                        content = chunk.content
+                        if isinstance(content, str):
+                            final_text += content
+                            yield content
+                        elif isinstance(content, list):
+                            for item in content:
+                                if isinstance(item, dict) and item.get("type") == "text":
+                                    text = item.get("text", "")
+                                    final_text += text
+                                    yield text
+
+                elif event_type == "on_tool_start":
+                    tool_count += 1
+                    yield {
+                        "__tool_start__": {
+                            "name": event.get("name", ""),
+                            "index": tool_count,
+                            "total": tool_count
+                        }
+                    }
+
+                elif event_type == "on_tool_end":
+                    yield {
+                        "__tool_end__": {
+                            "name": event.get("name", ""),
+                            "index": tool_count,
+                            "total": tool_count,
+                            "elapsed": 0
+                        }
+                    }
+
+            # 최종 사용량 정보
+            yield {"__usage__": {"input_tokens": 0, "output_tokens": 0}, "__text__": final_text}
+
+        # 비동기 제너레이터를 동기로 실행
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        try:
+            async_gen = async_stream()
+            while True:
+                try:
+                    result = loop.run_until_complete(async_gen.__anext__())
+                    yield result
+                except StopAsyncIteration:
+                    break
+        finally:
+            loop.close()
+
+    except Exception as e:
+        error_msg = handle_chat_error(e)
+        yield error_msg
+        yield {"__usage__": {"input_tokens": 0, "output_tokens": 0}, "__text__": error_msg}
+
+
+# ============================================================================
+# Legacy Support (Backward Compatibility)
+# ============================================================================
+
+def create_chat_response(
+    client: Anthropic,
+    model: str,
+    messages: list[dict],
+    data_context: str,
+    max_tokens: int = 2048
+) -> tuple[str, dict]:
+    """
+    Create chat response using Anthropic API. (Legacy)
+    """
+    full_system = f"{SYSTEM_PROMPT}\n\n{data_context}"
+
+    response = client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        system=full_system,
+        messages=messages
+    )
+
+    response_text = response.content[0].text
+    usage_info = {
+        'input_tokens': response.usage.input_tokens,
+        'output_tokens': response.usage.output_tokens
+    }
+
+    return response_text, usage_info
 
 
 def run_tool_calling(
@@ -182,18 +403,7 @@ def run_tool_calling(
     max_tokens: int = 4096
 ) -> tuple[str, dict]:
     """
-    Run Tool Calling conversation loop with max iterations. (T028)
-
-    Parameters:
-        client: Anthropic client instance
-        model (str): Model ID
-        messages (list[dict]): Conversation history
-        data_context (str): Data context from create_data_context()
-        df (pd.DataFrame): DataFrame for tool execution
-        max_tokens (int): Maximum tokens in response
-
-    Returns:
-        tuple[str, dict]: (response_text, usage_info)
+    Run Tool Calling conversation loop with max iterations. (Legacy)
     """
     full_system = f"""{SYSTEM_PROMPT}
 
@@ -250,18 +460,7 @@ def create_chat_response_with_tools(
     max_tokens: int = 4096
 ) -> tuple[str, dict]:
     """
-    Create chat response using Tool Calling. (T029-T032)
-
-    Parameters:
-        client: Anthropic client instance
-        model (str): Model ID
-        messages (list[dict]): Conversation history
-        data_context (str): Data context from create_data_context()
-        df (pd.DataFrame): DataFrame for tool execution
-        max_tokens (int): Maximum tokens in response
-
-    Returns:
-        tuple[str, dict]: (response_text, usage_info)
+    Create chat response using Tool Calling. (Legacy)
     """
     try:
         return run_tool_calling(client, model, messages, data_context, df, max_tokens)
@@ -279,24 +478,7 @@ def stream_chat_response_with_tools(
     max_tokens: int = 4096
 ):
     """
-    Stream chat response with Tool Calling support. (T046, T048)
-
-    This is a generator function that yields text chunks for streaming display.
-    It handles tool_use by executing tools and continuing the conversation.
-
-    Parameters:
-        client: Anthropic client instance
-        model (str): Model ID
-        messages (list[dict]): Conversation history
-        data_context (str): Data context from create_data_context()
-        df (pd.DataFrame): DataFrame for tool execution
-        max_tokens (int): Maximum tokens in response
-
-    Yields:
-        str: Text chunks for streaming display
-
-    Returns via final yield:
-        dict: Final response info {'text': str, 'usage': dict}
+    Stream chat response with Tool Calling support. (Legacy)
     """
     full_system = f"""{SYSTEM_PROMPT}
 
@@ -336,19 +518,16 @@ def stream_chat_response_with_tools(
                 final_text = current_text
                 break
 
-            # v1.1.2: Yield tool execution start event
             total_tools = len(tool_uses)
             yield {'__tool_batch_start__': {'total': total_tools}}
 
             tool_results = []
             for idx, tool_use in enumerate(tool_uses, 1):
-                # Yield tool start event
                 tool_start_time = time.time()
                 yield {'__tool_start__': {'name': tool_use.name, 'index': idx, 'total': total_tools}}
 
                 result = execute_tool(tool_use.name, tool_use.input, df)
 
-                # Yield tool end event
                 elapsed = time.time() - tool_start_time
                 yield {'__tool_end__': {'name': tool_use.name, 'index': idx, 'total': total_tools, 'elapsed': elapsed}}
 
@@ -358,23 +537,19 @@ def stream_chat_response_with_tools(
                     "content": str(result)
                 })
 
-            # Yield tool batch complete event
             yield {'__tool_batch_end__': {'total': total_tools}}
 
             working_messages.append({"role": "assistant", "content": final_message.content})
             working_messages.append({"role": "user", "content": tool_results})
 
-    # v1.1.2: LLM fallback when tools fail to provide a response
     if not final_text and iteration == MAX_TOOL_ITERATIONS - 1:
         yield {'__fallback_start__': True}
         try:
-            # Attempt direct LLM response without tools
             fallback_system = f"""{SYSTEM_PROMPT}
 
 {data_context}
 
-주의: 데이터 분석 도구를 사용할 수 없습니다. 데이터셋 정보를 기반으로 가능한 범위 내에서 답변해주세요.
-정확한 수치가 필요한 질문에는 "정확한 분석을 위해 더 구체적인 질문을 해주세요"라고 안내하세요."""
+주의: 데이터 분석 도구를 사용할 수 없습니다. 데이터셋 정보를 기반으로 가능한 범위 내에서 답변해주세요."""
 
             with client.messages.stream(
                 model=model,
@@ -396,5 +571,4 @@ def stream_chat_response_with_tools(
 
         yield {'__fallback_end__': True}
 
-    # Yield usage info as special dict at the end (T046 v1.1.2)
     yield {'__usage__': total_usage, '__text__': final_text}

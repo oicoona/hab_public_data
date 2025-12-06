@@ -41,6 +41,78 @@ from utils.chatbot import (
 )
 from anthropic import Anthropic
 
+# v1.2: 버전 히스토리 상수
+VERSION_HISTORY = [
+    {
+        "version": "v1.0",
+        "date": "2024-11",
+        "title": "초기 버전",
+        "description": "대구 공공데이터 시각화 앱 최초 릴리스",
+        "features": [
+            "7개 데이터셋 업로드 및 탐색",
+            "Folium 기반 지도 시각화",
+            "Plotly 기반 차트 시각화",
+            "기본 통계 정보 표시"
+        ]
+    },
+    {
+        "version": "v1.1",
+        "date": "2024-12",
+        "title": "AI 챗봇 추가",
+        "description": "Anthropic API 기반 데이터 질의응답 기능 추가",
+        "features": [
+            "Anthropic Claude 모델 연동",
+            "데이터셋별 대화 이력 관리",
+            "Tool Calling 기반 데이터 분석 (20개 도구)",
+            "스트리밍 응답 지원"
+        ]
+    },
+    {
+        "version": "v1.2",
+        "date": "2025-01",
+        "title": "LangGraph 마이그레이션",
+        "description": "LangGraph 기반 Tool Calling 아키텍처로 전환",
+        "features": [
+            "LangGraph StateGraph 기반 워크플로우",
+            "ECLO 예측 도구 추가 (21번째 도구)",
+            "향상된 도구 실행 및 라우팅",
+            "uv 패키지 매니저 지원"
+        ]
+    }
+]
+
+# v1.2: AI 챗봇 아키텍처 정보
+CHATBOT_ARCHITECTURE = {
+    "workflow": {
+        "name": "LangGraph StateGraph",
+        "nodes": ["chatbot", "tools"],
+        "description": "조건부 라우팅 기반 Tool Calling 워크플로우"
+    },
+    "tools": [
+        {"name": "describe_column", "category": "기본 분석", "description": "컬럼 기초 통계"},
+        {"name": "get_value_counts", "category": "기본 분석", "description": "값 빈도 분석"},
+        {"name": "calculate_correlation", "category": "기본 분석", "description": "상관계수 계산"},
+        {"name": "detect_outliers", "category": "기본 분석", "description": "이상치 탐지"},
+        {"name": "get_missing_info", "category": "기본 분석", "description": "결측값 정보"},
+        {"name": "filter_data", "category": "필터링", "description": "조건부 필터링"},
+        {"name": "filter_by_value", "category": "필터링", "description": "값 기반 필터링"},
+        {"name": "filter_by_range", "category": "필터링", "description": "범위 필터링"},
+        {"name": "group_statistics", "category": "집계", "description": "그룹별 통계"},
+        {"name": "aggregate_data", "category": "집계", "description": "데이터 집계"},
+        {"name": "get_top_n", "category": "집계", "description": "상위 N개 추출"},
+        {"name": "get_unique_values", "category": "집계", "description": "고유값 목록"},
+        {"name": "compare_groups", "category": "비교", "description": "그룹 비교"},
+        {"name": "cross_tabulation", "category": "비교", "description": "교차표 분석"},
+        {"name": "time_series_analysis", "category": "시계열", "description": "시계열 분석"},
+        {"name": "calculate_growth_rate", "category": "시계열", "description": "증감률 계산"},
+        {"name": "pivot_table", "category": "고급", "description": "피벗 테이블"},
+        {"name": "sample_data", "category": "고급", "description": "샘플 추출"},
+        {"name": "get_column_info", "category": "고급", "description": "컬럼 상세 정보"},
+        {"name": "search_data", "category": "고급", "description": "데이터 검색"},
+        {"name": "predict_eclo", "category": "예측", "description": "ECLO 사고 심각도 예측"}
+    ]
+}
+
 # 데이터셋 매핑 상수
 DATASET_MAPPING = {
     'cctv': {
@@ -436,8 +508,78 @@ def render_overview_tab():
         st.markdown("""
         **AI**
         - Anthropic Claude
+        - LangChain/LangGraph
         - Python 3.10+
         """)
+
+    # v1.2: 버전 히스토리 섹션
+    st.markdown("---")
+    st.subheader("📜 버전 히스토리")
+
+    for version_info in VERSION_HISTORY:
+        with st.expander(
+            f"**{version_info['version']}** - {version_info['title']} ({version_info['date']})",
+            expanded=(version_info['version'] == 'v1.2')  # 최신 버전만 펼침
+        ):
+            st.markdown(f"_{version_info['description']}_")
+            st.markdown("**주요 기능:**")
+            for feature in version_info['features']:
+                st.markdown(f"- {feature}")
+
+    # v1.2: AI 챗봇 아키텍처 시각화
+    st.markdown("---")
+    st.subheader("🤖 AI 챗봇 아키텍처")
+
+    # 워크플로우 다이어그램 (텍스트 기반)
+    st.markdown("**LangGraph 워크플로우:**")
+
+    workflow_col1, workflow_col2, workflow_col3 = st.columns([1, 2, 1])
+    with workflow_col2:
+        st.code("""
+┌─────────────────────────────────────────┐
+│              사용자 입력                 │
+└────────────────┬────────────────────────┘
+                 ▼
+┌─────────────────────────────────────────┐
+│           chatbot 노드                   │
+│      (Claude LLM 호출)                   │
+└────────────────┬────────────────────────┘
+                 ▼
+         ┌──────┴──────┐
+         │ tool_calls? │
+         └──────┬──────┘
+          Yes   │   No
+    ┌───────────┴───────────┐
+    ▼                       ▼
+┌───────────┐         ┌───────────┐
+│  tools    │         │   END     │
+│   노드    │         │  (응답)   │
+└─────┬─────┘         └───────────┘
+      │
+      └──────► chatbot (반복)
+        """, language=None)
+
+    # 도구 목록 표시
+    st.markdown("**사용 가능한 도구 (21개):**")
+
+    # 카테고리별로 그룹화
+    tool_categories = {}
+    for tool in CHATBOT_ARCHITECTURE['tools']:
+        category = tool['category']
+        if category not in tool_categories:
+            tool_categories[category] = []
+        tool_categories[category].append(tool)
+
+    # 카테고리별 컬럼 표시
+    category_list = list(tool_categories.keys())
+    cols = st.columns(len(category_list))
+
+    for idx, category in enumerate(category_list):
+        with cols[idx]:
+            st.markdown(f"**{category}**")
+            for tool in tool_categories[category]:
+                st.markdown(f"- `{tool['name']}`")
+                st.caption(f"  {tool['description']}")
 
     # v1.1.3: 시스템 구조, 데이터 분석 기초 개념, 분석 가이드 질문, 교차 데이터 분석 중요성 섹션 삭제
 
