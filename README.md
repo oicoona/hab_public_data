@@ -36,7 +36,43 @@ streamlit run app.py
 
 ## 버전 히스토리
 
-### v1.2.2 (현재)
+### v1.2.3 (현재)
+
+**코드 품질 개선 및 배치 예측** - 프롬프트 모듈화, 배치 ECLO 예측 지원
+
+#### 주요 변경사항
+
+| 영역 | v1.2.2 | v1.2.3 |
+|:-----|:-------|:-------|
+| **프롬프트 관리** | chatbot.py 내 하드코딩 | `utils/prompts.py` 분리 |
+| **ECLO 예측** | 단일 건만 가능 | 배치 예측 지원 (N건 동시) |
+| **도구 개수** | 21개 | 22개 (+predict_eclo_batch) |
+| **코드 품질** | 미사용 import 존재 | 불필요한 코드 정리 |
+
+#### 신규 파일
+
+| 파일 | 설명 |
+|:-----|:-----|
+| `utils/prompts.py` | 시스템 프롬프트 모듈 (SYSTEM_PROMPT, ECLO_PREDICTION_PROMPT, TOOL_DESCRIPTIONS) |
+
+#### 신규 도구
+
+| 도구 | 설명 |
+|:-----|:-----|
+| `predict_eclo_batch` | 여러 사고 데이터의 ECLO 일괄 예측 |
+
+#### 개선 사항
+
+- 프롬프트를 `utils/prompts.py`로 분리하여 관리 용이성 향상
+- `utils/chatbot.py`에서 미사용 import 제거 (AsyncGenerator, SystemMessage)
+- `app.py`에서 미사용 import 제거 (SYSTEM_PROMPT, create_chat_response 등)
+- `utils/predictor.py`에 배치 예측 함수 추가
+
+기준 문서: `docs/v1.2.3/app_improvement_proposal.md`
+
+---
+
+### v1.2.2
 
 **ECLO 예측 독립화** - 데이터셋에 관계없이 ECLO 예측 가능
 
@@ -300,6 +336,69 @@ streamlit run app.py
 
 ---
 
+## Tool Calling 도구 목록 (22개)
+
+AI 챗봇이 데이터 분석 시 사용하는 도구 목록입니다.
+
+### 데이터 정보
+
+| 도구명 | 설명 | 파라미터 |
+|:-------|:-----|:---------|
+| `get_dataframe_info` | 데이터프레임의 기본 정보 (행/열 수, 컬럼 타입) | 없음 |
+| `get_column_statistics` | 특정 컬럼의 기초 통계량 | column |
+| `get_missing_values` | 각 컬럼별 결측값 개수와 비율 | 없음 |
+| `get_value_counts` | 특정 컬럼의 값 빈도수 | column, top_n |
+
+### 데이터 조작
+
+| 도구명 | 설명 | 파라미터 |
+|:-------|:-----|:---------|
+| `filter_dataframe` | 조건에 맞는 행 필터링 | column, operator, value |
+| `sort_dataframe` | 특정 컬럼 기준 정렬 | column, ascending, top_n |
+| `get_unique_values` | 특정 컬럼의 고유값 목록 | column |
+| `get_sample_rows` | 데이터에서 샘플 행 추출 | n, column, value |
+
+### 통계 분석
+
+| 도구명 | 설명 | 파라미터 |
+|:-------|:-----|:---------|
+| `get_correlation` | 수치형 컬럼들 간의 상관관계 분석 | columns |
+| `group_by_aggregate` | 그룹별 집계 연산 | group_column, agg_column, operation |
+| `calculate_percentile` | 특정 컬럼의 백분위수 계산 | column, percentile |
+| `get_outliers` | IQR 방식으로 이상치 탐지 | column, multiplier |
+| `cross_tabulation` | 두 범주형 컬럼의 교차표 생성 | row_column, col_column, normalize |
+| `get_column_correlation_with_target` | 타겟 컬럼과 모든 숫자 컬럼의 상관관계 | target_column |
+
+### 시계열 분석
+
+| 도구명 | 설명 | 파라미터 |
+|:-------|:-----|:---------|
+| `get_date_range` | 날짜 컬럼의 최소/최대 범위 | column |
+| `get_temporal_pattern` | 시간대별 패턴 분석 (월별, 요일별) | column |
+
+### 지리 분석
+
+| 도구명 | 설명 | 파라미터 |
+|:-------|:-----|:---------|
+| `get_geo_bounds` | 위경도 컬럼의 경계값 (최소/최대 좌표) | 없음 |
+
+### 데이터 품질
+
+| 도구명 | 설명 | 파라미터 |
+|:-------|:-----|:---------|
+| `analyze_missing_pattern` | 결측값 패턴 분석 (MCAR, MAR, MNAR 추정) | column |
+| `detect_data_types` | 각 컬럼의 실제 데이터 타입 감지 | 없음 |
+| `summarize_categorical_distribution` | 범주형 컬럼의 분포 요약 | column |
+
+### ECLO 예측
+
+| 도구명 | 설명 | 파라미터 |
+|:-------|:-----|:---------|
+| `predict_eclo` | 단일 사고 데이터의 ECLO 예측 | weather, road_surface, road_type, accident_type, time_period, district, day_of_week, accident_hour, accident_year, accident_month, accident_day |
+| `predict_eclo_batch` | 여러 사고 데이터의 ECLO 일괄 예측 (v1.2.3) | accidents (사고 정보 리스트) |
+
+---
+
 ## 프로젝트 구조
 
 ```
@@ -324,14 +423,15 @@ public_data/
 │   ├── chatbot.py        # AI 챗봇 로직 (LangGraph 통합)
 │   ├── graph.py          # v1.2: LangGraph StateGraph 정의
 │   ├── predictor.py      # v1.2: ECLO 예측 모듈
-│   ├── tools.py          # Tool Calling 도구 (21개)
+│   ├── prompts.py        # v1.2.3: 시스템 프롬프트 모듈
+│   ├── tools.py          # Tool Calling 도구 (22개)
 │   ├── visualizer.py     # Plotly 시각화
 │   ├── geo.py            # Folium 지도
 │   ├── loader.py         # 데이터 로더
 │   └── narration.py      # 나레이션
 ├── docs/                  # 버전별 문서
 │   ├── constitution.md
-│   ├── v1.0/, v1.1/, v1.1.1/, v1.1.2/, v1.1.3/, v1.2/, v1.2.1/, v1.2.2/
+│   ├── v1.0/, v1.1/, v1.1.1/, v1.1.2/, v1.1.3/, v1.2/, v1.2.1/, v1.2.2/, v1.2.3/
 ├── specs/                 # SDD 스펙 산출물
 │   ├── 001-daegu-data-viz/
 │   ├── 002-app-v1-1-upgrade/
@@ -361,6 +461,7 @@ public_data/
 | `docs/v1.2/*.md` | v1.2 개선 제안서 (LangGraph 마이그레이션) |
 | `docs/v1.2.1/*.md` | v1.2.1 개선 제안서 (uv 마이그레이션, 버그 수정) |
 | `docs/v1.2.2/*.md` | v1.2.2 개선 제안서 (ECLO 예측 독립화) |
+| `docs/v1.2.3/*.md` | v1.2.3 개선 제안서 (프롬프트 모듈화, 배치 예측) |
 | `specs/001-daegu-data-viz/` | v1.0 스펙 산출물 (spec, plan, tasks) |
 | `specs/002-app-v1-1-upgrade/` | v1.1 스펙 산출물 |
 | `specs/003-app-v111-upgrade/` | v1.1.1 스펙 산출물 |
