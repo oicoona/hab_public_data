@@ -276,7 +276,7 @@ def render_dataset_tab(dataset_name: str, dataset_display_name: str):
 
     # Data Preview
     with st.expander("📋 데이터 미리보기 (처음 10개 행)", expanded=False):
-        st.dataframe(df.head(10), use_container_width=True)
+        st.dataframe(df.head(10), width='stretch')
 
     # Column Information
     with st.expander("📊 컬럼 정보", expanded=False):
@@ -287,12 +287,12 @@ def render_dataset_tab(dataset_name: str, dataset_display_name: str):
                 '타입': info['dtypes'][col],
                 '결측값 %': f"{info['missing_ratios'][col] * 100:.1f}%"
             })
-        st.dataframe(col_info_df, use_container_width=True)
+        st.dataframe(col_info_df, width='stretch')
 
     # Descriptive Statistics for Numeric Columns
     if not info['numeric_summary'].empty:
         with st.expander("📈 숫자 컬럼 통계", expanded=False):
-            st.dataframe(info['numeric_summary'], use_container_width=True)
+            st.dataframe(info['numeric_summary'], width='stretch')
 
     # Visualizations
     st.subheader("시각화")
@@ -376,7 +376,7 @@ def render_dataset_tab(dataset_name: str, dataset_display_name: str):
 
             # T031: Render scatter plot
             fig = plot_scatter(df, x_col, y_col)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         else:
             # Single column selection for other chart types
             selected_numeric_col = st.selectbox(
@@ -393,7 +393,7 @@ def render_dataset_tab(dataset_name: str, dataset_display_name: str):
 
                 # T031: Render selected chart type
                 fig = plot_with_options(df, selected_numeric_col, chart_type_map[chart_type])
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
     else:
         st.info("ℹ️ 이 데이터셋에는 숫자형 컬럼이 없습니다.")
 
@@ -411,7 +411,7 @@ def render_dataset_tab(dataset_name: str, dataset_display_name: str):
 
         if selected_cat_col:
             fig = plot_categorical_distribution(df, selected_cat_col)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
     else:
         st.info("ℹ️ 이 데이터셋에는 범주형 컬럼이 없습니다.")
 
@@ -477,7 +477,7 @@ def render_overview_tab():
 
                     # Show preview
                     with st.expander("📋 데이터 미리보기", expanded=False):
-                        st.dataframe(df.head(5), use_container_width=True)
+                        st.dataframe(df.head(5), width='stretch')
 
                 except Exception as e:
                     st.error(f"❌ 파일 읽기 오류: {str(e)}")
@@ -765,7 +765,7 @@ def render_cross_analysis_tab():
                                         '표준편차': f"{proximity_df[t_str].std():.2f}"
                                     })
 
-                            st.dataframe(summary_data, use_container_width=True)
+                            st.dataframe(summary_data, width='stretch')
 
                             # Natural language insights (T037)
                             st.markdown("### 💡 분석 인사이트")
@@ -873,7 +873,7 @@ def render_cross_analysis_tab():
                         barmode='overlay'
                     )
 
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
 
                     # Distribution comparison insight
                     st.markdown("### 💡 비교 인사이트")
@@ -907,6 +907,7 @@ def render_sidebar():
         )
 
         if api_key:
+            api_key = api_key.strip()  # 앞뒤 공백 제거
             if validate_api_key(api_key):
                 st.session_state.chatbot['api_key'] = api_key
                 st.success("✅ API Key 설정됨")
@@ -1045,7 +1046,7 @@ def render_chatbot_tab():
             total_cells = len(df) * len(df.columns)
             missing_pct = (df.isnull().sum().sum() / total_cells * 100) if total_cells > 0 else 0
             st.metric("전체 결측률", f"{missing_pct:.1f}%")
-        st.dataframe(df.head(3), use_container_width=True)
+        st.dataframe(df.head(3), width='stretch')
 
     st.markdown("---")
 
