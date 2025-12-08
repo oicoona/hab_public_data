@@ -31,10 +31,7 @@ from utils.narration import (
     compare_distributions
 )
 from utils.chatbot import (
-    SYSTEM_PROMPT,
     create_data_context,
-    create_chat_response,
-    create_chat_response_with_tools,
     stream_chat_response_with_tools,
     handle_chat_error,
     validate_api_key
