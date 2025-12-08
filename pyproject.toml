@@ -1,0 +1,26 @@
+[project]
+name = "daegu-public-data-viz"
+version = "1.2.1"
+description = "대구 공공데이터 시각화 앱 - Streamlit 기반 대화형 데이터 분석 도구"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "streamlit>=1.28.0",
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "plotly>=5.17.0",
+    "folium>=0.14.0",
+    "streamlit-folium>=0.15.0",
+    "matplotlib>=3.8.0",
+    "openpyxl>=3.1.5",
+    "anthropic>=0.39.0",
+    "langchain>=0.3.0",
+    "langchain-anthropic>=0.3.0",
+    "langgraph>=0.2.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
+    "ruff>=0.1.0",
+]
