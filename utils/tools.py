@@ -906,17 +906,17 @@ def summarize_categorical_distribution(column: str, config: RunnableConfig) -> s
 
 @tool
 def predict_eclo(
-    기상상태: str,
-    노면상태: str,
-    도로형태: str,
-    사고유형: str,
-    시간대: str,
-    시군구: str,
-    요일: str,
-    사고시: int,
-    사고연: int,
-    사고월: int,
-    사고일: int,
+    weather: str,
+    road_surface: str,
+    road_type: str,
+    accident_type: str,
+    time_period: str,
+    district: str,
+    day_of_week: str,
+    accident_hour: int,
+    accident_year: int,
+    accident_month: int,
+    accident_day: int,
     config: RunnableConfig
 ) -> str:
     """
@@ -926,17 +926,17 @@ def predict_eclo(
     모든 11개 피처가 제공되어야 예측이 가능합니다.
 
     피처별 유효 값:
-    - 기상상태: 맑음, 흐림, 비, 눈, 안개 등
-    - 노면상태: 건조, 젖음/습기, 적설, 결빙 등
-    - 도로형태: 단일로, 교차로, 횡단보도 등
-    - 사고유형: 차대차, 차대사람, 차량단독 등
-    - 시간대: 새벽, 아침, 낮, 저녁, 밤
-    - 시군구: 대구 시군구명
-    - 요일: 월요일~일요일
-    - 사고시: 0-23 (시간)
-    - 사고연: 연도 (예: 2023)
-    - 사고월: 1-12
-    - 사고일: 1-31
+    - weather (기상상태): 맑음, 흐림, 비, 눈, 안개 등
+    - road_surface (노면상태): 건조, 젖음/습기, 적설, 결빙 등
+    - road_type (도로형태): 단일로, 교차로, 횡단보도 등
+    - accident_type (사고유형): 차대차, 차대사람, 차량단독 등
+    - time_period (시간대): 새벽, 아침, 낮, 저녁, 밤
+    - district (시군구): 대구 시군구명
+    - day_of_week (요일): 월요일~일요일
+    - accident_hour (사고시): 0-23 (시간)
+    - accident_year (사고연): 연도 (예: 2023)
+    - accident_month (사고월): 1-12
+    - accident_day (사고일): 1-31
 
     사용자가 피처 정보를 충분히 제공하지 않았다면,
     이 도구를 호출하기 전에 추가 정보를 요청하세요.
@@ -951,17 +951,17 @@ def predict_eclo(
         from utils.predictor import predict_eclo_value, interpret_eclo
 
         features = {
-            "기상상태": 기상상태,
-            "노면상태": 노면상태,
-            "도로형태": 도로형태,
-            "사고유형": 사고유형,
-            "시간대": 시간대,
-            "시군구": 시군구,
-            "요일": 요일,
-            "사고시": 사고시,
-            "사고연": 사고연,
-            "사고월": 사고월,
-            "사고일": 사고일,
+            "기상상태": weather,
+            "노면상태": road_surface,
+            "도로형태": road_type,
+            "사고유형": accident_type,
+            "시간대": time_period,
+            "시군구": district,
+            "요일": day_of_week,
+            "사고시": accident_hour,
+            "사고연": accident_year,
+            "사고월": accident_month,
+            "사고일": accident_day,
         }
 
         eclo_value = predict_eclo_value(features)
@@ -975,14 +975,14 @@ def predict_eclo(
             f"**해석**: {interpretation}",
             f"",
             f"### 입력된 피처",
-            f"- 기상상태: {기상상태}",
-            f"- 노면상태: {노면상태}",
-            f"- 도로형태: {도로형태}",
-            f"- 사고유형: {사고유형}",
-            f"- 시간대: {시간대}",
-            f"- 시군구: {시군구}",
-            f"- 요일: {요일}",
-            f"- 사고 시각: {사고연}년 {사고월}월 {사고일}일 {사고시}시"
+            f"- 기상상태: {weather}",
+            f"- 노면상태: {road_surface}",
+            f"- 도로형태: {road_type}",
+            f"- 사고유형: {accident_type}",
+            f"- 시간대: {time_period}",
+            f"- 시군구: {district}",
+            f"- 요일: {day_of_week}",
+            f"- 사고 시각: {accident_year}년 {accident_month}월 {accident_day}일 {accident_hour}시"
         ]
 
         return "\n".join(lines)

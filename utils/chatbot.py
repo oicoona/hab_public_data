@@ -115,9 +115,9 @@ def handle_chat_error(error: Exception) -> str:
     elif isinstance(error, APIError):
         error_msg = str(error)
         if "authentication" in error_msg.lower() or "invalid" in error_msg.lower():
-            return "API Key가 유효하지 않습니다. 올바른 API Key를 입력해주세요."
+            return f"API Key 인증 오류: {error_msg}"
         elif "model" in error_msg.lower():
-            return "선택한 모델을 사용할 수 없습니다. 다른 모델을 선택해주세요."
+            return f"모델 오류: {error_msg}"
         else:
             return f"API 오류가 발생했습니다: {error_msg}"
     else:
@@ -133,10 +133,17 @@ def validate_api_key(api_key: str) -> bool:
 
     Returns:
         bool: True if key appears valid
+
+    Note:
+        v1.2.1: Anthropic API 키 형식이 다양해짐에 따라 검증 로직 완화
+        - sk-ant-api03-... (기존 형식)
+        - sk-ant-... (기존 형식)
+        - sk-... (새 형식)
     """
     if not api_key:
         return False
-    return api_key.startswith('sk-ant-') and len(api_key) > 20
+    # v1.2.1: 'sk-'로 시작하고 충분한 길이면 유효한 것으로 간주
+    return api_key.startswith('sk-') and len(api_key) > 20
 
 
 # ============================================================================
