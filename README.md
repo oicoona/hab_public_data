@@ -36,7 +36,29 @@ streamlit run app.py
 
 ## 버전 히스토리
 
-### v1.2.1 (현재)
+### v1.2.2 (현재)
+
+**ECLO 예측 독립화** - 데이터셋에 관계없이 ECLO 예측 가능
+
+#### 주요 변경사항
+
+| 영역 | v1.2.1 | v1.2.2 |
+|:-----|:-------|:-------|
+| **ECLO 예측** | train/test 데이터셋 필수 | 모든 데이터셋에서 사용 가능 |
+| **사용자 경험** | 피처 누락 시 오류 | 자연어 재질문으로 정보 수집 |
+| **의존성** | - | scikit-learn, lightgbm 추가 |
+
+#### 개선 사항
+
+- ECLO 예측 도구에서 데이터셋 조건 검증 제거
+- 시스템 프롬프트에 ECLO 예측 재질문 로직 추가
+- 유효값 목록을 실제 인코더 값으로 업데이트
+
+기준 문서: `docs/v1.2.2/app_improvement_proposal.md`
+
+---
+
+### v1.2.1
 
 **환경 개선 및 버그 수정** - uv 패키지 매니저 전환, API Key 검증 수정
 
@@ -47,15 +69,6 @@ streamlit run app.py
 | **패키지 관리** | `requirements.txt` only | `pyproject.toml` + uv 지원 |
 | **API Key 검증** | `sk-ant-` 형식만 허용 | `sk-` 형식 모두 허용 |
 | **Streamlit 컴포넌트** | `use_container_width` (deprecated) | `width='stretch'` |
-
-#### 신규 파일
-
-- `pyproject.toml`: uv 패키지 매니저 설정 파일
-
-#### 버그 수정
-
-- API Key 검증 로직 완화 (`sk-ant-` → `sk-` 형식 지원)
-- Streamlit deprecation 경고 제거 (`use_container_width` → `width`)
 
 기준 문서: `docs/v1.2.1/app_improvement_proposal.md`
 
@@ -318,7 +331,7 @@ public_data/
 │   └── narration.py      # 나레이션
 ├── docs/                  # 버전별 문서
 │   ├── constitution.md
-│   ├── v1.0/, v1.1/, v1.1.1/, v1.1.2/, v1.1.3/, v1.2/, v1.2.1/
+│   ├── v1.0/, v1.1/, v1.1.1/, v1.1.2/, v1.1.3/, v1.2/, v1.2.1/, v1.2.2/
 ├── specs/                 # SDD 스펙 산출물
 │   ├── 001-daegu-data-viz/
 │   ├── 002-app-v1-1-upgrade/
@@ -347,6 +360,7 @@ public_data/
 | `docs/v1.1.3/*.md` | v1.1.3 개선 제안서 (UI 간소화, 버그 수정) |
 | `docs/v1.2/*.md` | v1.2 개선 제안서 (LangGraph 마이그레이션) |
 | `docs/v1.2.1/*.md` | v1.2.1 개선 제안서 (uv 마이그레이션, 버그 수정) |
+| `docs/v1.2.2/*.md` | v1.2.2 개선 제안서 (ECLO 예측 독립화) |
 | `specs/001-daegu-data-viz/` | v1.0 스펙 산출물 (spec, plan, tasks) |
 | `specs/002-app-v1-1-upgrade/` | v1.1 스펙 산출물 |
 | `specs/003-app-v111-upgrade/` | v1.1.1 스펙 산출물 |
