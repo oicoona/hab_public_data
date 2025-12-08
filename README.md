@@ -36,7 +36,32 @@ streamlit run app.py
 
 ## 버전 히스토리
 
-### v1.2 (현재)
+### v1.2.1 (현재)
+
+**환경 개선 및 버그 수정** - uv 패키지 매니저 전환, API Key 검증 수정
+
+#### 주요 변경사항
+
+| 영역 | v1.2 | v1.2.1 |
+|:-----|:-----|:-------|
+| **패키지 관리** | `requirements.txt` only | `pyproject.toml` + uv 지원 |
+| **API Key 검증** | `sk-ant-` 형식만 허용 | `sk-` 형식 모두 허용 |
+| **Streamlit 컴포넌트** | `use_container_width` (deprecated) | `width='stretch'` |
+
+#### 신규 파일
+
+- `pyproject.toml`: uv 패키지 매니저 설정 파일
+
+#### 버그 수정
+
+- API Key 검증 로직 완화 (`sk-ant-` → `sk-` 형식 지원)
+- Streamlit deprecation 경고 제거 (`use_container_width` → `width`)
+
+기준 문서: `docs/v1.2.1/app_improvement_proposal.md`
+
+---
+
+### v1.2
 
 **LangGraph 마이그레이션** - LangGraph 기반 Tool Calling 아키텍처로 전환
 
@@ -267,7 +292,8 @@ streamlit run app.py
 ```
 public_data/
 ├── app.py                 # Streamlit 메인 앱
-├── requirements.txt       # Python 의존성
+├── pyproject.toml         # uv 패키지 매니저 설정 (v1.2.1+)
+├── requirements.txt       # Python 의존성 (pip 호환)
 ├── syllabus.md           # 15일 교육과정 커리큘럼
 ├── data/                  # 대구 공공데이터 CSV
 │   ├── train.csv
@@ -292,7 +318,7 @@ public_data/
 │   └── narration.py      # 나레이션
 ├── docs/                  # 버전별 문서
 │   ├── constitution.md
-│   ├── v1.0/, v1.1/, v1.1.1/, v1.1.2/, v1.1.3/, v1.2/
+│   ├── v1.0/, v1.1/, v1.1.1/, v1.1.2/, v1.1.3/, v1.2/, v1.2.1/
 ├── specs/                 # SDD 스펙 산출물
 │   ├── 001-daegu-data-viz/
 │   ├── 002-app-v1-1-upgrade/
@@ -320,6 +346,7 @@ public_data/
 | `docs/v1.1.2/*.md` | v1.1.2 개선 제안서 (UX 개선, 분석 도구 확장) |
 | `docs/v1.1.3/*.md` | v1.1.3 개선 제안서 (UI 간소화, 버그 수정) |
 | `docs/v1.2/*.md` | v1.2 개선 제안서 (LangGraph 마이그레이션) |
+| `docs/v1.2.1/*.md` | v1.2.1 개선 제안서 (uv 마이그레이션, 버그 수정) |
 | `specs/001-daegu-data-viz/` | v1.0 스펙 산출물 (spec, plan, tasks) |
 | `specs/002-app-v1-1-upgrade/` | v1.1 스펙 산출물 |
 | `specs/003-app-v111-upgrade/` | v1.1.1 스펙 산출물 |
