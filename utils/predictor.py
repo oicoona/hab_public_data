@@ -170,6 +170,26 @@ def interpret_eclo(eclo_value: float) -> str:
         해석 문자열
     """
     if eclo_value < 0.1:
+        return "경미"
+    elif eclo_value < 0.5:
+        return "일반"
+    elif eclo_value < 1.0:
+        return "심각"
+    else:
+        return "매우 심각"
+
+
+def interpret_eclo_detail(eclo_value: float) -> str:
+    """
+    ECLO 값을 상세하게 해석합니다.
+
+    Parameters:
+        eclo_value: 예측된 ECLO 값
+
+    Returns:
+        상세 해석 문자열
+    """
+    if eclo_value < 0.1:
         return (
             "경미한 사고 수준입니다. "
             "부상 가능성이 낮고, 대부분 경상 또는 무상해로 예상됩니다."
@@ -189,6 +209,52 @@ def interpret_eclo(eclo_value: float) -> str:
             "매우 심각한 사고 수준입니다. "
             "치명적 부상 가능성이 높으며, 즉각적인 응급 처치가 필요합니다."
         )
+
+
+def predict_eclo_batch(accidents: list[dict]) -> list[dict]:
+    """
+    여러 사고 데이터의 ECLO를 일괄 예측합니다. (v1.2.3)
+
+    Parameters:
+        accidents: 사고 정보 딕셔너리 리스트
+            각 딕셔너리는 11개 피처 포함:
+            - 기상상태, 노면상태, 도로형태, 사고유형, 시간대
+            - 시군구, 요일, 사고시, 사고연, 사고월, 사고일
+
+    Returns:
+        예측 결과 리스트 (각 항목: {features, eclo, interpretation, error})
+
+    Raises:
+        FileNotFoundError: 모델 파일 누락
+    """
+    model = load_model()
+    results = []
+
+    for idx, features in enumerate(accidents):
+        result = {
+            "index": idx + 1,
+            "features": features,
+            "eclo": None,
+            "interpretation": None,
+            "error": None
+        }
+
+        try:
+            encoded_df = encode_features(features)
+            prediction = model.predict(encoded_df)
+            eclo_value = float(prediction[0])
+
+            result["eclo"] = eclo_value
+            result["interpretation"] = interpret_eclo(eclo_value)
+
+        except ValueError as e:
+            result["error"] = str(e)
+        except Exception as e:
+            result["error"] = f"예측 오류: {str(e)}"
+
+        results.append(result)
+
+    return results
 
 
 # 피처별 유효 값 (docstring 참조용)

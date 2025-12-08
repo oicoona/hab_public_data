@@ -1,6 +1,10 @@
 """
 Data analysis tools for LangGraph-based AI chatbot.
 
+v1.2.3: 배치 ECLO 예측 도구 추가
+- 기존 20개 분석 도구 + 2개 ECLO 예측 도구 (단일 + 배치)
+- RunnableConfig를 통한 DataFrame 전달
+
 v1.2: LangChain @tool 데코레이터 형식으로 마이그레이션
 - 기존 20개 분석 도구 + 1개 ECLO 예측 도구
 - RunnableConfig를 통한 DataFrame 전달
@@ -996,6 +1000,114 @@ def predict_eclo(
         return f"ECLO 예측 중 오류가 발생했습니다: {str(e)}"
 
 
+@tool
+def predict_eclo_batch(accidents: list[dict], config: RunnableConfig) -> str:
+    """
+    여러 사고 데이터의 ECLO(사고 심각도)를 일괄 예측합니다. (v1.2.3)
+
+    이 도구는 어떤 데이터셋이 활성화되어 있든 상관없이 사용 가능합니다.
+    사용자가 여러 건의 교통사고 ECLO 예측을 요청하면 이 도구를 사용하세요.
+
+    **중요**: 사용자가 자연어로 여러 사고 정보를 제공할 때, 각 사고별로
+    누락된 피처가 있다면 이 도구를 호출하기 전에 반드시 추가 정보를 자연어로 질문하세요.
+
+    Parameters:
+        accidents: 사고 정보 리스트. 각 항목은 다음 11개 키를 포함하는 딕셔너리:
+            - weather (기상상태): 맑음, 흐림, 비, 눈, 안개, 기타
+            - road_surface (노면상태): 건조, 젖음/습기, 적설, 서리/결빙, 침수, 기타
+            - road_type (도로형태): 교차로 - 교차로안, 교차로 - 교차로부근 등
+            - accident_type (사고유형): 차대차, 차대사람, 차량단독
+            - time_period (시간대): 심야, 출근시간대, 일반시간대, 퇴근시간대
+            - district (시군구): 대구광역시 내 상세 주소
+            - day_of_week (요일): 월요일~일요일
+            - accident_hour (사고시): 0-23
+            - accident_year (사고연): 연도
+            - accident_month (사고월): 1-12
+            - accident_day (사고일): 1-31
+
+    Returns:
+        테이블 형태의 예측 결과 문자열
+
+    예시:
+        사용자: "다음 3개 사고에 대해 ECLO 예측해줘:
+                1. 2022-01-01 토요일 맑음 수성구 상동...
+                2. 2022-01-02 일요일 비 중구 동성로..."
+    """
+    try:
+        from utils.predictor import predict_eclo_batch as batch_predict
+
+        # 영문 키를 한글 키로 매핑
+        key_mapping = {
+            "weather": "기상상태",
+            "road_surface": "노면상태",
+            "road_type": "도로형태",
+            "accident_type": "사고유형",
+            "time_period": "시간대",
+            "district": "시군구",
+            "day_of_week": "요일",
+            "accident_hour": "사고시",
+            "accident_year": "사고연",
+            "accident_month": "사고월",
+            "accident_day": "사고일",
+        }
+
+        # 영문 키를 한글 키로 변환
+        converted_accidents = []
+        for accident in accidents:
+            converted = {}
+            for eng_key, kor_key in key_mapping.items():
+                if eng_key in accident:
+                    converted[kor_key] = accident[eng_key]
+                elif kor_key in accident:
+                    converted[kor_key] = accident[kor_key]
+            converted_accidents.append(converted)
+
+        # 배치 예측 실행
+        results = batch_predict(converted_accidents)
+
+        # 결과 테이블 생성
+        lines = [
+            f"## ECLO 배치 예측 결과 ({len(results)}건)",
+            f"",
+            f"| # | 일시 | 장소 | ECLO | 심각도 | 상태 |",
+            f"|---|------|------|------|--------|------|"
+        ]
+
+        success_count = 0
+        error_count = 0
+
+        for result in results:
+            idx = result["index"]
+            features = result["features"]
+
+            # 날짜 정보 추출
+            date_str = f"{features.get('사고연', '-')}-{features.get('사고월', '-'):02d}-{features.get('사고일', '-'):02d}" if all(k in features for k in ['사고연', '사고월', '사고일']) else "-"
+
+            # 장소 정보 추출
+            district = features.get("시군구", "-")
+            if district and "대구광역시" in district:
+                district = district.replace("대구광역시 ", "")
+
+            if result["error"]:
+                error_count += 1
+                lines.append(f"| {idx} | {date_str} | {district} | - | - | ❌ {result['error'][:20]}... |")
+            else:
+                success_count += 1
+                eclo = result["eclo"]
+                interpretation = result["interpretation"]
+                lines.append(f"| {idx} | {date_str} | {district} | {eclo:.4f} | {interpretation} | ✅ |")
+
+        lines.append(f"")
+        lines.append(f"**요약**: 성공 {success_count}건, 실패 {error_count}건")
+
+        return "\n".join(lines)
+
+    except FileNotFoundError as e:
+        return f"ECLO 예측 모델을 찾을 수 없습니다: {str(e)}"
+    except Exception as e:
+        return f"ECLO 배치 예측 중 오류가 발생했습니다: {str(e)}"
+
+
 # ============================================================================
 # Tool Export
 # ============================================================================
@@ -1024,8 +1136,9 @@ def get_all_tools() -> list:
         detect_data_types,
         get_temporal_pattern,
         summarize_categorical_distribution,
-        # ECLO 예측 도구 (1개)
+        # ECLO 예측 도구 (2개)
         predict_eclo,
+        predict_eclo_batch,
     ]
 
 
