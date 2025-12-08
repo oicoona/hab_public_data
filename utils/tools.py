@@ -920,31 +920,32 @@ def predict_eclo(
     config: RunnableConfig
 ) -> str:
     """
-    ECLO(Equivalent Casualty Loss of life)를 예측합니다.
+    ECLO(Equivalent Casualty Loss of life) 사고 심각도를 예측합니다.
 
-    이 도구는 train 또는 test 데이터셋이 활성화된 경우에만 사용 가능합니다.
-    모든 11개 피처가 제공되어야 예측이 가능합니다.
+    이 도구는 어떤 데이터셋이 활성화되어 있든 상관없이 사용 가능합니다.
+    사용자가 교통사고 ECLO 예측을 요청하면 이 도구를 사용하세요.
+
+    **중요**: 사용자가 자연어로 사고 정보를 제공할 때, 누락된 피처가 있다면
+    이 도구를 호출하기 전에 반드시 추가 정보를 자연어로 질문하세요.
 
     피처별 유효 값:
-    - weather (기상상태): 맑음, 흐림, 비, 눈, 안개 등
-    - road_surface (노면상태): 건조, 젖음/습기, 적설, 결빙 등
-    - road_type (도로형태): 단일로, 교차로, 횡단보도 등
-    - accident_type (사고유형): 차대차, 차대사람, 차량단독 등
-    - time_period (시간대): 새벽, 아침, 낮, 저녁, 밤
-    - district (시군구): 대구 시군구명
-    - day_of_week (요일): 월요일~일요일
-    - accident_hour (사고시): 0-23 (시간)
-    - accident_year (사고연): 연도 (예: 2023)
-    - accident_month (사고월): 1-12
-    - accident_day (사고일): 1-31
+    - weather (기상상태): 맑음, 흐림, 비, 눈, 안개, 기타
+    - road_surface (노면상태): 건조, 젖음/습기, 적설, 서리/결빙, 침수, 기타
+    - road_type (도로형태): 교차로 - 교차로안, 교차로 - 교차로부근, 교차로 - 교차로횡단보도내, 단일로 - 기타, 단일로 - 터널, 단일로 - 교량, 단일로 - 고가도로위, 단일로 - 지하차도(도로)내, 주차장 - 주차장, 기타 - 기타
+    - accident_type (사고유형): 차대차, 차대사람, 차량단독
+    - time_period (시간대): 심야, 출근시간대, 일반시간대, 퇴근시간대
+    - district (시군구): 대구광역시 내 상세 주소 (예: 대구광역시 수성구 상동, 대구광역시 중구 동성로1가)
+    - day_of_week (요일): 월요일, 화요일, 수요일, 목요일, 금요일, 토요일, 일요일
+    - accident_hour (사고시): 0-23 (정수)
+    - accident_year (사고연): 연도 (예: 2022, 2023)
+    - accident_month (사고월): 1-12 (정수)
+    - accident_day (사고일): 1-31 (정수)
 
-    사용자가 피처 정보를 충분히 제공하지 않았다면,
-    이 도구를 호출하기 전에 추가 정보를 요청하세요.
+    예시 입력 파싱:
+    - "2022-01-01 01시 토요일 맑음" → accident_year=2022, accident_month=1, accident_day=1,
+      accident_hour=1, day_of_week="토요일", weather="맑음", time_period="심야"
     """
-    # 데이터셋 조건 검증
-    current_dataset = get_current_dataset_from_config(config)
-    if current_dataset not in ["train", "test"]:
-        return "ECLO 예측은 train 또는 test 데이터셋에서만 사용 가능합니다. 현재 데이터셋에서는 일반 데이터 분석 기능만 사용할 수 있습니다."
+    # v1.2.2: 데이터셋 조건 검증 제거 - 모든 데이터셋에서 ECLO 예측 가능
 
     # predictor 모듈 import 및 예측 실행
     try:
