@@ -1,0 +1,188 @@
+version: '3.8'
+
+services:
+  # PostgreSQL 데이터베이스
+  postgres:
+    image: postgres:15-alpine
+    container_name: hab_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hab_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hab_password}
+      POSTGRES_DB: ${POSTGRES_DB:-hab_public_data}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hab_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hab_network
+
+  # Redis (캐시 + Celery 브로커)
+  redis:
+    image: redis:7-alpine
+    container_name: hab_redis
+    command: redis-server --appendonly yes
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hab_network
+
+  # FastAPI 백엔드
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: hab_backend
+    environment:
+      # Database
+      DATABASE_URL: postgresql://${POSTGRES_USER:-hab_user}:${POSTGRES_PASSWORD:-hab_password}@postgres:5432/${POSTGRES_DB:-hab_public_data}
+
+      # Redis
+      REDIS_URL: redis://redis:6379/0
+      CACHE_TTL: ${CACHE_TTL:-3600}
+
+      # Celery
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+
+      # Backend settings
+      BACKEND_HOST: 0.0.0.0
+      BACKEND_PORT: 8000
+      BACKEND_RELOAD: ${BACKEND_RELOAD:-false}
+
+      # CORS
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:8501,http://streamlit:8501}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./backend:/app/backend
+      - ./utils:/app/utils
+      - ./model:/app/model
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - hab_network
+
+  # Celery Worker (비동기 작업 처리)
+  celery-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: hab_celery_worker
+    environment:
+      # Database
+      DATABASE_URL: postgresql://${POSTGRES_USER:-hab_user}:${POSTGRES_PASSWORD:-hab_password}@postgres:5432/${POSTGRES_DB:-hab_public_data}
+
+      # Redis
+      REDIS_URL: redis://redis:6379/0
+
+      # Celery
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    volumes:
+      - ./backend:/app/backend
+      - ./utils:/app/utils
+      - ./model:/app/model
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    command: celery -A backend.tasks.celery_app worker --loglevel=info --concurrency=4
+    networks:
+      - hab_network
+
+  # Celery Beat (스케줄 작업)
+  celery-beat:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: hab_celery_beat
+    environment:
+      # Database
+      DATABASE_URL: postgresql://${POSTGRES_USER:-hab_user}:${POSTGRES_PASSWORD:-hab_password}@postgres:5432/${POSTGRES_DB:-hab_public_data}
+
+      # Redis
+      REDIS_URL: redis://redis:6379/0
+
+      # Celery
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    volumes:
+      - ./backend:/app/backend
+      - ./utils:/app/utils
+      - ./model:/app/model
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    command: celery -A backend.tasks.celery_app beat --loglevel=info
+    networks:
+      - hab_network
+
+  # Flower (Celery 모니터링 UI)
+  flower:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: hab_flower
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      FLOWER_PORT: 5555
+    ports:
+      - "${FLOWER_PORT:-5555}:5555"
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: celery -A backend.tasks.celery_app flower --port=5555
+    networks:
+      - hab_network
+
+  # Streamlit 프론트엔드
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    container_name: hab_streamlit
+    environment:
+      BACKEND_URL: ${BACKEND_URL:-http://backend:8000}
+    ports:
+      - "${STREAMLIT_PORT:-8501}:8501"
+    volumes:
+      - ./app.py:/app/app.py
+      - ./utils:/app/utils
+      - ./env:/app/env
+    depends_on:
+      - backend
+    command: streamlit run app.py --server.port=8501 --server.address=0.0.0.0
+    networks:
+      - hab_network
+
+# 네트워크 설정
+networks:
+  hab_network:
+    driver: bridge
+
+# 볼륨 설정 (데이터 영속성)
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
