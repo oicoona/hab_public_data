@@ -32,11 +32,18 @@ from utils.narration import (
 )
 from utils.chatbot import (
     create_data_context,
-    stream_chat_response_with_tools,
-    handle_chat_error,
     validate_api_key
 )
-from anthropic import Anthropic
+from utils.backend_client import (
+    send_chat_message,
+    BackendAPIError,
+    upload_dataset,
+    list_datasets,
+    get_dataset,
+    create_share_link,
+    delete_dataset,
+    check_backend_health
+)
 
 # v1.2: 버전 히스토리 상수
 VERSION_HISTORY = [
@@ -189,6 +196,7 @@ def init_session_state():
             'model': 'claude-sonnet-4-5-20250929',
             'selected_dataset': None,
             'chat_history': {},  # T035: Dataset-specific chat history
+            'conversation_ids': {},  # Phase 4: Track backend conversation IDs per dataset
             'tokens': {'total': 0, 'input': 0, 'output': 0}
         }
 
@@ -198,6 +206,13 @@ def init_session_state():
             'max_points': 5000,  # 기본값
             'confirmed': False   # Enter 키 입력 여부
         }
+
+    # Phase 5: Backend dataset management
+    if 'backend_datasets' not in st.session_state:
+        st.session_state.backend_datasets = {}  # {dataset_id: metadata}
+
+    if 'selected_backend_dataset' not in st.session_state:
+        st.session_state.selected_backend_dataset = None  # Currently selected backend dataset ID
 
     st.session_state.initialized = True
 
@@ -315,13 +330,15 @@ def render_dataset_tab(dataset_name: str, dataset_display_name: str):
             cache_key = f"map_{dataset_name}_{len(df)}_{max_points}"
 
             if cache_key not in st.session_state:
-                st.session_state[cache_key] = create_folium_map(
-                    df, lat_col, lng_col,
-                    popup_cols=popup_cols,
-                    color='blue',
-                    name=dataset_display_name,
-                    max_points=max_points
-                )
+                # Phase 6: T084 - Add loading indicator for map creation
+                with st.spinner(f'🗺️ {dataset_display_name} 지도 생성 중...'):
+                    st.session_state[cache_key] = create_folium_map(
+                        df, lat_col, lng_col,
+                        popup_cols=popup_cols,
+                        color='blue',
+                        name=dataset_display_name,
+                        max_points=max_points
+                    )
 
             # T042: Display map with returned_objects=[] to prevent rerendering
             st_folium(st.session_state[cache_key], width=700, height=500, returned_objects=[])
@@ -372,7 +389,9 @@ def render_dataset_tab(dataset_name: str, dataset_display_name: str):
                 st.warning(f"⚠️ {y_col} 컬럼의 결측값이 {y_ratio*100:.1f}%입니다. 결과가 왜곡될 수 있습니다.")
 
             # T031: Render scatter plot
-            fig = plot_scatter(df, x_col, y_col)
+            # Phase 6: T084 - Add loading indicator for chart rendering
+            with st.spinner(f'📊 {x_col} vs {y_col} 차트 생성 중...'):
+                fig = plot_scatter(df, x_col, y_col)
             st.plotly_chart(fig, width='stretch')
         else:
             # Single column selection for other chart types
@@ -389,7 +408,9 @@ def render_dataset_tab(dataset_name: str, dataset_display_name: str):
                     st.warning(f"⚠️ {selected_numeric_col} 컬럼의 결측값이 {missing_ratio*100:.1f}%입니다. 결과가 왜곡될 수 있습니다.")
 
                 # T031: Render selected chart type
-                fig = plot_with_options(df, selected_numeric_col, chart_type_map[chart_type])
+                # Phase 6: T084 - Add loading indicator for chart rendering
+                with st.spinner(f'📊 {chart_type} 차트 생성 중...'):
+                    fig = plot_with_options(df, selected_numeric_col, chart_type_map[chart_type])
                 st.plotly_chart(fig, width='stretch')
     else:
         st.info("ℹ️ 이 데이터셋에는 숫자형 컬럼이 없습니다.")
@@ -407,7 +428,9 @@ def render_dataset_tab(dataset_name: str, dataset_display_name: str):
         )
 
         if selected_cat_col:
-            fig = plot_categorical_distribution(df, selected_cat_col)
+            # Phase 6: T084 - Add loading indicator for chart rendering
+            with st.spinner(f'📊 {selected_cat_col} 분포 차트 생성 중...'):
+                fig = plot_categorical_distribution(df, selected_cat_col)
             st.plotly_chart(fig, width='stretch')
     else:
         st.info("ℹ️ 이 데이터셋에는 범주형 컬럼이 없습니다.")
@@ -478,6 +501,83 @@ def render_overview_tab():
 
                 except Exception as e:
                     st.error(f"❌ 파일 읽기 오류: {str(e)}")
+
+    st.markdown("---")
+
+    # Phase 5: Backend dataset upload
+    st.subheader("🗄️ Backend 업로드")
+    st.markdown("CSV 파일을 backend 서버에 업로드하여 데이터를 영구 저장하고 공유할 수 있습니다.")
+
+    if check_backend_health():
+        st.success("✅ Backend 서버 연결됨")
+
+        backend_file = st.file_uploader(
+            "Backend에 업로드할 CSV 파일 선택",
+            type=['csv'],
+            key="backend_file_uploader",
+            help="파일은 backend 서버에 업로드되어 다른 사용자와 공유할 수 있습니다."
+        )
+
+        backend_description = st.text_area(
+            "데이터셋 설명 (선택사항)",
+            placeholder="이 데이터셋에 대한 간단한 설명을 입력하세요...",
+            key="backend_description",
+            height=100
+        )
+
+        if backend_file is not None:
+            if st.button("📤 Backend에 업로드", key="upload_to_backend", type="primary", use_container_width=True):
+                with st.spinner("Backend에 파일 업로드 중..."):
+                    try:
+                        # Save uploaded file temporarily
+                        import tempfile
+                        import os
+
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.csv') as tmp_file:
+                            tmp_file.write(backend_file.getvalue())
+                            tmp_path = tmp_file.name
+
+                        # Upload to backend
+                        try:
+                            response = upload_dataset(
+                                file_path=tmp_path,
+                                description=backend_description if backend_description else None
+                            )
+
+                            # Clean up temp file
+                            os.unlink(tmp_path)
+
+                            # Show success
+                            st.success(f"✅ Backend 업로드 완료! (Dataset ID: {response['id']})")
+
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("데이터셋 이름", response['name'])
+                            with col2:
+                                st.metric("행 x 컬럼", f"{response['rows']:,} x {response['columns']}")
+                            with col3:
+                                size_mb = response['size_bytes'] / (1024 * 1024)
+                                st.metric("파일 크기", f"{size_mb:.2f} MB")
+
+                            st.info("💡 Sidebar의 'Backend 데이터셋' 섹션에서 업로드된 파일을 확인하고 공유할 수 있습니다.")
+
+                            # Force refresh sidebar by incrementing a counter
+                            if 'backend_refresh_counter' not in st.session_state:
+                                st.session_state.backend_refresh_counter = 0
+                            st.session_state.backend_refresh_counter += 1
+
+                        except Exception as e:
+                            # Clean up temp file on error
+                            if os.path.exists(tmp_path):
+                                os.unlink(tmp_path)
+                            raise e
+
+                    except BackendAPIError as e:
+                        st.error(f"❌ Backend 업로드 실패: {str(e)}")
+                    except Exception as e:
+                        st.error(f"❌ 업로드 중 오류 발생: {str(e)}")
+    else:
+        st.warning("⚠️ Backend 서버에 연결할 수 없습니다. 로컬 업로드만 사용 가능합니다.")
 
     st.markdown("---")
 
@@ -675,7 +775,9 @@ def render_cross_analysis_tab():
             # Overlay map caching with session_state
             overlay_cache_key = f"overlay_map_{len(datasets_to_overlay)}_{sum(len(ds['df']) for ds in datasets_to_overlay)}"
             if overlay_cache_key not in st.session_state:
-                st.session_state[overlay_cache_key] = create_overlay_map(datasets_to_overlay)
+                # Phase 6: T084 - Add loading indicator for overlay map creation
+                with st.spinner(f'🗺️ {len(datasets_to_overlay)}개 데이터셋 통합 지도 생성 중...'):
+                    st.session_state[overlay_cache_key] = create_overlay_map(datasets_to_overlay)
 
             # Display map with returned_objects=[] to prevent rerendering
             st_folium(st.session_state[overlay_cache_key], width=900, height=600, returned_objects=[])
@@ -985,15 +1087,82 @@ def render_sidebar():
             icon = "✅" if status else "⏳"
             st.text(f"{icon} {DATASET_MAPPING[key]['display_name']}")
 
+        st.markdown("---")
+
+        # Phase 5: Backend dataset management
+        st.subheader("🗄️ Backend 데이터셋")
+
+        # Check backend health
+        if check_backend_health():
+            st.success("✅ Backend 연결됨")
+
+            # Load backend datasets
+            try:
+                datasets_response = list_datasets(limit=100)
+                backend_datasets = datasets_response.get('datasets', [])
+
+                if backend_datasets:
+                    st.caption(f"총 {len(backend_datasets)}개 데이터셋")
+
+                    # Dataset selector
+                    dataset_options = {
+                        f"{ds['name']} (ID: {ds['id']})": ds['id']
+                        for ds in backend_datasets
+                    }
+
+                    selected_name = st.selectbox(
+                        "데이터셋 선택",
+                        options=["선택 안함"] + list(dataset_options.keys()),
+                        key="backend_dataset_selector"
+                    )
+
+                    if selected_name != "선택 안함":
+                        dataset_id = dataset_options[selected_name]
+                        st.session_state.selected_backend_dataset = dataset_id
+
+                        # Show dataset info
+                        selected_ds = next(ds for ds in backend_datasets if ds['id'] == dataset_id)
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("행 수", f"{selected_ds['rows']:,}")
+                        with col2:
+                            st.metric("컬럼 수", selected_ds['columns'])
+
+                        # Share button
+                        if st.button("🔗 공유 링크 생성", key="create_share_link", use_container_width=True):
+                            try:
+                                share_response = create_share_link(dataset_id)
+                                share_url = share_response['share_url']
+
+                                st.success("✅ 공유 링크 생성 완료!")
+                                st.code(share_url, language=None)
+
+                                # Copy to clipboard helper text
+                                st.caption("📋 위 링크를 복사하여 공유하세요 (7일간 유효)")
+
+                            except BackendAPIError as e:
+                                st.error(f"공유 링크 생성 실패: {str(e)}")
+                    else:
+                        st.session_state.selected_backend_dataset = None
+
+                else:
+                    st.info("업로드된 backend 데이터셋이 없습니다")
+
+            except BackendAPIError as e:
+                st.error(f"데이터셋 목록 로드 실패: {str(e)}")
+
+        else:
+            st.warning("⚠️ Backend 서버에 연결할 수 없습니다")
+
 
 def render_chatbot_tab():
     """
-    Render the chatbot tab for data Q&A. (T045-T050)
+    Render the chatbot tab for data Q&A using backend API. (Phase 4)
     """
     st.header("💬 데이터 질의응답")
     st.markdown("업로드한 데이터셋에 대해 AI에게 질문하세요.")
 
-    # T050: Check API Key
+    # Check API Key
     api_key = st.session_state.chatbot.get('api_key', '')
     if not api_key or not validate_api_key(api_key):
         st.warning("⚠️ 사이드바에서 Anthropic API Key를 먼저 입력해주세요.")
@@ -1017,7 +1186,7 @@ def render_chatbot_tab():
         st.info("📤 먼저 **프로젝트 개요** 탭에서 데이터셋을 업로드해주세요.")
         return
 
-    # T046: Dataset selection
+    # Dataset selection
     selected_display_name = st.selectbox(
         "분석할 데이터셋 선택:",
         options=list(uploaded_datasets.keys()),
@@ -1047,17 +1216,21 @@ def render_chatbot_tab():
 
     st.markdown("---")
 
-    # T038: Get dataset-specific chat history
+    # Get dataset-specific chat history and conversation ID
     chat_history = get_chat_history(selected_dataset_key)
+    conversation_id = st.session_state.chatbot['conversation_ids'].get(selected_dataset_key)
 
-    # T049: Display conversation history
+    # Display conversation history
     st.subheader("대화 내역")
 
     for msg in chat_history:
         with st.chat_message(msg['role']):
+            # Show cache hit indicator if present
+            if 'cache_hit' in msg and msg['cache_hit']:
+                st.caption("⚡ 캐시된 응답")
             st.markdown(msg['content'])
 
-    # T047, T048: Question input and send
+    # Question input
     user_question = st.chat_input("데이터에 대해 질문하세요...")
 
     if user_question:
@@ -1071,87 +1244,74 @@ def render_chatbot_tab():
         with st.chat_message('user'):
             st.markdown(user_question)
 
-        # T047: Generate response with streaming
+        # Generate response using backend API
         with st.chat_message('assistant'):
             try:
-                # Create Anthropic client
-                client = Anthropic(api_key=api_key)
+                # Show spinner while waiting for backend
+                with st.spinner("AI가 생각하고 있습니다..."):
+                    import time
+                    start_time = time.time()
 
-                # v1.1.2: Create data context with caching
-                cache_key = f"context_{selected_dataset_key}_{len(df)}"
-                if cache_key not in st.session_state:
-                    st.session_state[cache_key] = create_data_context(df, selected_display_name)
-                data_context = st.session_state[cache_key]
+                    # Call backend API
+                    # Phase 5: Use backend dataset_id if selected, otherwise None
+                    backend_dataset_id = st.session_state.get('selected_backend_dataset')
 
-                # Prepare messages for API
-                api_messages = [
-                    {'role': m['role'], 'content': m['content']}
-                    for m in chat_history
-                ]
+                    response = send_chat_message(
+                        message=user_question,
+                        api_key=api_key,
+                        dataset_id=backend_dataset_id,  # Phase 5: Use selected backend dataset
+                        conversation_id=conversation_id,
+                        timeout=30.0
+                    )
 
-                # T047: Stream response using st.write_stream
-                response_container = st.empty()
-                full_response = ""
+                    elapsed = time.time() - start_time
 
-                stream_gen = stream_chat_response_with_tools(
-                    client=client,
-                    model=st.session_state.chatbot['model'],
-                    messages=api_messages,
-                    data_context=data_context,
-                    df=df
-                )
+                # Extract response data
+                assistant_content = response['content']
+                cache_hit = response.get('cache_hit', False)
+                new_conversation_id = response['conversation_id']
+                usage = response.get('usage')
 
-                # v1.1.3: Collect tool execution info for summary after response
-                tool_executions = []
-                used_fallback = False
+                # Update conversation ID
+                st.session_state.chatbot['conversation_ids'][selected_dataset_key] = new_conversation_id
 
-                # T046 v1.1.3: Process stream with usage tracking and tool info collection
-                for chunk in stream_gen:
-                    if isinstance(chunk, dict):
-                        if '__usage__' in chunk:
-                            # Update token usage from final message
-                            usage = chunk['__usage__']
-                            st.session_state.chatbot['tokens']['input'] += usage['input_tokens']
-                            st.session_state.chatbot['tokens']['output'] += usage['output_tokens']
-                            st.session_state.chatbot['tokens']['total'] += (
-                                usage['input_tokens'] + usage['output_tokens']
-                            )
-                        elif '__tool_end__' in chunk:
-                            # Collect tool execution info
-                            tool_executions.append(chunk['__tool_end__'])
-                        elif '__fallback_start__' in chunk:
-                            used_fallback = True
-                        # Skip other tool events (batch_start, tool_start, batch_end, fallback_end)
-                    else:
-                        full_response += chunk
-                        response_container.markdown(full_response + "▌")
+                # Show cache hit indicator
+                if cache_hit:
+                    st.caption(f"⚡ 캐시된 응답 (응답 시간: {elapsed:.2f}초)")
+                else:
+                    st.caption(f"응답 시간: {elapsed:.2f}초")
 
-                response_container.markdown(full_response)
+                # Display response
+                st.markdown(assistant_content)
 
-                # v1.1.3: Show tool summary after response (fixes position bug)
-                if tool_executions:
-                    total_time = sum(t['elapsed'] for t in tool_executions)
-                    with st.expander(f"🔧 사용된 도구 ({len(tool_executions)}개, {total_time:.2f}초)", expanded=False):
-                        for tool in tool_executions:
-                            st.write(f"✅ `{tool['name']}` ({tool['elapsed']:.2f}초)")
-
-                if used_fallback:
-                    st.caption("💡 도구 기반 분석이 어려워 일반 응답으로 전환되었습니다.")
+                # Update token usage if available
+                if usage:
+                    st.session_state.chatbot['tokens']['input'] += usage.get('input_tokens', 0)
+                    st.session_state.chatbot['tokens']['output'] += usage.get('output_tokens', 0)
+                    st.session_state.chatbot['tokens']['total'] += (
+                        usage.get('input_tokens', 0) + usage.get('output_tokens', 0)
+                    )
 
                 # Add assistant message to history
                 chat_history.append({
                     'role': 'assistant',
-                    'content': full_response
+                    'content': assistant_content,
+                    'cache_hit': cache_hit
                 })
 
+            except BackendAPIError as e:
+                st.error(f"백엔드 API 오류: {str(e)}")
+                st.info("백엔드 서버가 실행 중인지 확인해주세요: `docker compose up -d`")
             except Exception as e:
-                error_msg = handle_chat_error(e)
-                st.error(error_msg)
+                st.error(f"예상치 못한 오류가 발생했습니다: {str(e)}")
 
-    # T039: Clear conversation button (dataset-specific)
+    # Clear conversation button (dataset-specific)
     if chat_history:
         if st.button("🗑️ 대화 내역 삭제", key="clear_chat"):
             clear_chat_history(selected_dataset_key)
+            # Also clear conversation ID
+            if selected_dataset_key in st.session_state.chatbot['conversation_ids']:
+                del st.session_state.chatbot['conversation_ids'][selected_dataset_key]
             st.rerun()
 
 

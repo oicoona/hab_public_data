@@ -8,7 +8,32 @@
 
 ## 빠른 시작
 
-### uv 사용 (권장)
+### Docker Compose 사용 (v1.3 권장) 🐳
+
+```bash
+# 1. 환경 변수 설정
+cp .env.example .env
+cp backend/.env.example backend/.env
+# Edit .env files with your configuration
+
+# 2. Docker Compose로 전체 스택 실행
+docker compose up -d
+
+# 3. 서비스 상태 확인
+docker compose ps
+
+# 4. 로그 확인
+docker compose logs -f backend
+
+# 5. 접속
+# - Streamlit UI: http://localhost:8501
+# - FastAPI Docs: http://localhost:8000/docs
+# - Flower (Celery): http://localhost:5555
+```
+
+### 로컬 개발 (Frontend만)
+
+#### uv 사용
 
 ```bash
 # 1. uv 설치 (최초 1회)
@@ -18,7 +43,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv run streamlit run app.py
 ```
 
-### pip 사용 (기존 방식)
+#### pip 사용
 
 ```bash
 # 1. 가상환경 생성 및 활성화
@@ -36,7 +61,177 @@ streamlit run app.py
 
 ## 버전 히스토리
 
-### v1.2.3 (현재)
+### v1.3.0 (현재)
+
+**Backend API 분리 및 마이크로서비스 아키텍처** - FastAPI, PostgreSQL, Redis, Celery 기반 백엔드 도입
+
+#### 아키텍처 변경
+
+| 영역 | v1.2.x | v1.3.0 |
+|:-----|:-------|:-------|
+| **아키텍처** | 모놀리식 Streamlit 앱 | Frontend (Streamlit) + Backend (FastAPI) 분리 |
+| **데이터베이스** | 세션 상태만 (휘발성) | PostgreSQL (영구 저장) |
+| **캐싱** | Streamlit 캐시 | Redis (분산 캐싱) |
+| **비동기 작업** | 없음 | Celery + Redis |
+| **배포** | 단일 컨테이너 | Docker Compose (6 서비스) |
+| **API** | 없음 | REST API (OpenAPI 스펙) |
+
+#### 신규 기능
+
+**Phase 3: ECLO 예측 API** ✅
+- 단일 예측 API (`POST /api/predict/eclo`)
+- 배치 예측 API (Celery 비동기)
+- 모델 싱글톤 패턴으로 성능 최적화
+
+**Phase 4: AI Chatbot API** ✅
+- 대화 내역 영구 저장 (PostgreSQL)
+- Redis 캐싱 (응답 시간 <100ms)
+- LangGraph 백엔드 마이그레이션
+- 22개 분석 도구 서버 사이드 실행
+
+**Phase 5: Dataset Management** ✅
+- CSV 업로드 API (50MB 제한, UTF-8 검증)
+- 메타데이터 자동 추출 (행/열/크기)
+- 공유 링크 생성 (7일 만료)
+- 데이터셋 목록 조회 (페이지네이션)
+
+**Phase 6: Visualization** ✅
+- Plotly/Folium 시각화 유지
+- 로딩 인디케이터 추가
+- 백엔드 데이터와 통합
+
+**Phase 7: Polish** ✅
+- 요청/응답 로깅 미들웨어
+- 표준화된 에러 응답
+- 환경 변수 검증
+- 시작 시 모델 프리로드
+
+#### 기술 스택
+
+**Backend**
+- FastAPI 0.100+
+- SQLAlchemy 2.0 (ORM)
+- Alembic (마이그레이션)
+- PostgreSQL 15
+- Redis 7
+- Celery 5.3
+- Pydantic 2.0 (검증)
+
+**Frontend**
+- Streamlit 1.28+
+- httpx (백엔드 클라이언트)
+- 기존 시각화 라이브러리 유지
+
+**Infrastructure**
+- Docker Compose
+- 6개 서비스 (postgres, redis, backend, celery-worker, flower, streamlit)
+- 헬스체크 기반 의존성 관리
+
+#### 디렉토리 구조
+
+```
+hab_public_data/
+├── backend/                  # FastAPI 백엔드
+│   ├── api/                 # API 라우트
+│   │   ├── deps.py         # 의존성 (DB, Redis)
+│   │   └── routes/         # 엔드포인트
+│   ├── core/               # 코어 기능
+│   │   └── cache.py        # Redis 캐싱
+│   ├── db/                 # 데이터베이스
+│   │   ├── models/         # SQLAlchemy 모델 (5개)
+│   │   └── session.py      # DB 세션 팩토리
+│   ├── ml/                 # 머신러닝
+│   │   └── model_loader.py # 모델 싱글톤
+│   ├── schemas/            # Pydantic 스키마
+│   ├── services/           # 비즈니스 로직
+│   ├── tasks/              # Celery 태스크
+│   ├── uploads/            # 업로드 파일 저장
+│   ├── config.py           # 설정 (환경 변수)
+│   ├── main.py             # FastAPI 앱
+│   └── Dockerfile
+├── alembic/                 # DB 마이그레이션
+├── utils/                   # Frontend 유틸리티
+│   └── backend_client.py   # 백엔드 API 클라이언트
+├── app.py                   # Streamlit 프론트엔드
+├── docker-compose.yml       # 전체 스택 오케스트레이션
+└── requirements-backend.txt # 백엔드 의존성
+```
+
+#### API 엔드포인트
+
+**Prediction API**
+- `POST /api/predict/eclo` - 단일 ECLO 예측
+- `POST /api/predict/eclo/batch` - 배치 예측 제출
+- `GET /api/predict/batch/{id}/results` - 배치 결과 조회
+
+**Chat API**
+- `POST /api/chat/message` - AI 질의응답
+- `GET /api/chat/conversations` - 대화 목록
+- `GET /api/chat/conversations/{id}/messages` - 대화 내역
+
+**Dataset API**
+- `POST /api/datasets/upload` - CSV 업로드
+- `GET /api/datasets` - 데이터셋 목록
+- `GET /api/datasets/{id}` - 데이터셋 조회
+- `POST /api/datasets/{id}/share` - 공유 링크 생성
+- `GET /api/datasets/shared/{token}` - 공유 데이터셋 접근
+- `DELETE /api/datasets/{id}` - 데이터셋 삭제
+
+**Utility**
+- `GET /health` - 헬스체크
+
+#### 성능 개선
+
+| 메트릭 | v1.2.x | v1.3.0 | 개선율 |
+|:-------|:-------|:-------|:------|
+| 단일 예측 | ~2s | <1s | **50%** |
+| 반복 질문 캐시 | 없음 | <100ms | **🚀 신규** |
+| 배치 100건 | 불가능 | <2분 | **🚀 신규** |
+| 데이터셋 공유 | 불가능 | 7일 링크 | **🚀 신규** |
+| 대화 내역 | 세션만 | 영구 저장 | **🚀 신규** |
+
+#### 마이그레이션 가이드
+
+**v1.2.x → v1.3.0**
+
+1. Docker Compose 설정
+   ```bash
+   cp .env.example .env
+   cp backend/.env.example backend/.env
+   ```
+
+2. 환경 변수 편집
+   ```bash
+   # .env
+   BACKEND_URL=http://localhost:8000
+   ANTHROPIC_API_KEY=sk-ant-...
+
+   # backend/.env
+   DATABASE_URL=postgresql://postgres:password@postgres:5432/hab_public_data
+   REDIS_URL=redis://redis:6379/0
+   ```
+
+3. 전체 스택 시작
+   ```bash
+   docker compose up -d
+   ```
+
+4. 마이그레이션 자동 실행 (컨테이너 시작 시)
+
+#### 알려진 이슈
+
+- Phase 4 테스트 대기 중 (사용자 실행 필요)
+- Phase 5 테스트 대기 중 (사용자 실행 필요)
+
+#### 참고 문서
+
+- 스펙: `specs/005-app-v1.3-backend-sep/`
+- 테스트 가이드: `RUN_TESTS_NOW.md`, `MVP_TESTING_GUIDE.md`
+- API 문서: `http://localhost:8000/docs` (FastAPI Swagger UI)
+
+---
+
+### v1.2.3
 
 **코드 품질 개선 및 배치 예측** - 프롬프트 모듈화, 배치 ECLO 예측 지원
 

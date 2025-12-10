@@ -1,0 +1,443 @@
+openapi: 3.0.3
+info:
+  title: 대구 공공데이터 시각화 앱 Backend API
+  description: FastAPI 기반 백엔드 서버 API 명세
+  version: 1.3.0
+  contact:
+    name: Backend API Support
+servers:
+  - url: http://localhost:8000
+    description: 로컬 개발 서버
+  - url: http://backend:8000
+    description: Docker Compose 환경
+
+tags:
+  - name: prediction
+    description: ECLO 예측 API
+  - name: chat
+    description: AI 챗봇 API
+  - name: datasets
+    description: 데이터셋 관리 API
+  - name: health
+    description: 헬스체크 API
+
+paths:
+  /health:
+    get:
+      tags: [health]
+      summary: 헬스체크
+      description: 서비스 상태 확인
+      responses:
+        '200':
+          description: 서비스 정상
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "healthy"
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  /api/predict/eclo:
+    post:
+      tags: [prediction]
+      summary: 단일 ECLO 예측
+      description: 교통사고 조건을 입력받아 ECLO 값 예측
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ECLOPredictionRequest'
+      responses:
+        '200':
+          description: 예측 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ECLOPredictionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/predict/eclo/batch:
+    post:
+      tags: [prediction]
+      summary: 배치 ECLO 예측
+      description: 여러 교통사고 조건을 입력받아 배치 예측 (Celery 큐)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                accidents:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/ECLOPredictionRequest'
+      responses:
+        '202':
+          description: 배치 작업 접수됨
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  batch_id:
+                    type: string
+                    example: "batch_123"
+                  status:
+                    type: string
+                    example: "processing"
+                  total:
+                    type: integer
+                    example: 100
+                  results_url:
+                    type: string
+                    example: "/api/predict/batch/batch_123/results"
+                  estimated_completion:
+                    type: string
+                    format: date-time
+        '429':
+          description: 큐가 가득 참 (100개 초과)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/chat/message:
+    post:
+      tags: [chat]
+      summary: AI 챗봇 메시지 전송
+      description: 데이터셋에 대한 질문을 AI 챗봇에게 전송
+      parameters:
+        - name: X-Anthropic-API-Key
+          in: header
+          required: true
+          schema:
+            type: string
+          description: 사용자의 Anthropic API 키
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - dataset_id
+                - message
+              properties:
+                dataset_id:
+                  type: string
+                  example: "ds_456"
+                message:
+                  type: string
+                  example: "사고가 가장 많은 시간대는?"
+                conversation_id:
+                  type: string
+                  nullable: true
+                  example: "conv_789"
+      responses:
+        '200':
+          description: 응답 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  response:
+                    type: string
+                    example: "분석 결과, 오후 5-6시에 사고가 가장 많이 발생합니다..."
+                  tool_calls:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        args:
+                          type: object
+                        result:
+                          type: string
+                  token_usage:
+                    type: object
+                    properties:
+                      input:
+                        type: integer
+                      output:
+                        type: integer
+                      total:
+                        type: integer
+                  cache_hit:
+                    type: boolean
+                  conversation_id:
+                    type: string
+                  timestamp:
+                    type: string
+                    format: date-time
+        '401':
+          description: API 키 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/datasets/upload:
+    post:
+      tags: [datasets]
+      summary: 데이터셋 업로드
+      description: CSV 파일 업로드 및 메타데이터 저장
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: CSV 파일 (최대 50MB)
+                name:
+                  type: string
+                  example: "대구_교통사고_2024"
+                description:
+                  type: string
+                  nullable: true
+      responses:
+        '200':
+          description: 업로드 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatasetResponse'
+        '400':
+          description: 잘못된 파일 형식 또는 크기 초과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/datasets:
+    get:
+      tags: [datasets]
+      summary: 데이터셋 목록 조회
+      description: 업로드된 데이터셋 목록 조회 (페이지네이션)
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+            minimum: 1
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
+      responses:
+        '200':
+          description: 조회 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  datasets:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DatasetResponse'
+                  total:
+                    type: integer
+                  page:
+                    type: integer
+
+  /api/datasets/{dataset_id}/share:
+    post:
+      tags: [datasets]
+      summary: 데이터셋 공유 링크 생성
+      description: 7일 유효한 공유 링크 생성
+      parameters:
+        - name: dataset_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 공유 링크 생성 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  share_token:
+                    type: string
+                    example: "abc123def456"
+                  share_url:
+                    type: string
+                    example: "https://app.example.com/shared/abc123def456"
+                  expires_at:
+                    type: string
+                    format: date-time
+        '404':
+          description: 데이터셋을 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  schemas:
+    ECLOPredictionRequest:
+      type: object
+      required:
+        - weather
+        - road_surface
+        - road_type
+        - accident_type
+        - time_period
+        - district
+        - day_of_week
+        - accident_hour
+        - accident_year
+        - accident_month
+        - accident_day
+      properties:
+        weather:
+          type: string
+          example: "맑음"
+        road_surface:
+          type: string
+          example: "건조"
+        road_type:
+          type: string
+          example: "교차로"
+        accident_type:
+          type: string
+          example: "차대차"
+        time_period:
+          type: string
+          example: "낮"
+        district:
+          type: string
+          example: "중구"
+        day_of_week:
+          type: string
+          example: "월요일"
+        accident_hour:
+          type: integer
+          example: 14
+          minimum: 0
+          maximum: 23
+        accident_year:
+          type: integer
+          example: 2024
+        accident_month:
+          type: integer
+          example: 12
+          minimum: 1
+          maximum: 12
+        accident_day:
+          type: integer
+          example: 8
+          minimum: 1
+          maximum: 31
+
+    ECLOPredictionResponse:
+      type: object
+      properties:
+        eclo:
+          type: number
+          format: float
+          example: 0.23
+        interpretation:
+          type: string
+          example: "일반"
+          enum: ["경미", "일반", "심각", "사망"]
+        detail:
+          type: string
+          example: "일반적인 사고 수준입니다. 경상 가능성이 있으며, 치료가 필요할 수 있습니다."
+        prediction_id:
+          type: string
+          example: "pred_789"
+        model_version:
+          type: string
+          example: "v1.0"
+        timestamp:
+          type: string
+          format: date-time
+
+    DatasetResponse:
+      type: object
+      properties:
+        dataset_id:
+          type: string
+          example: "ds_456"
+        name:
+          type: string
+          example: "대구_교통사고_훈련데이터"
+        description:
+          type: string
+          nullable: true
+        rows:
+          type: integer
+          example: 15234
+        columns:
+          type: integer
+          example: 28
+        size_bytes:
+          type: integer
+          example: 2048576
+        uploaded_at:
+          type: string
+          format: date-time
+        columns_info:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              type:
+                type: string
+              unique:
+                type: integer
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          example: "Invalid request"
+        detail:
+          type: string
+          nullable: true
+        timestamp:
+          type: string
+          format: date-time
+
+  responses:
+    BadRequest:
+      description: 잘못된 요청
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    InternalError:
+      description: 서버 오류
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

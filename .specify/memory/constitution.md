@@ -1,9 +1,9 @@
 <!--
 Sync Impact Report:
 ===================
-Version: 1.1.0 → 1.2.0 (MINOR - 새 의존성 추가 및 데이터 로딩 방식 변경 반영)
+Version: 1.2.0 → 1.2.1 (PATCH - docs/constitution.md 참고 문서와의 정합성 검증 및 누락 항목 추가)
 Ratification Date: 2025-11-21
-Last Amended: 2025-12-02
+Last Amended: 2025-12-09
 
 Modified Principles:
 - UNCHANGED: I. Data-First Exploration
@@ -16,8 +16,7 @@ Added Sections:
 - None
 
 Modified Sections:
-- VIII. Data Handling Rules: 데이터 로딩 방식 (고정 파일 → CSV 업로드) 반영
-- IX. Dependencies: anthropic 패키지 추가 (AI 챗봇 기능)
+- VIII. Data Handling Rules (8.4 성능 제한): 근접성 분석 최대 행 제한 추가 (5,000행)
 
 Removed Sections:
 - None
@@ -31,9 +30,9 @@ Follow-up TODOs:
 - None (all placeholders filled)
 
 Change Summary (한국어):
-- v1.1 앱 개선사항 반영: CSV 업로드 방식, AI 챗봇 기능
-- anthropic 패키지를 필수 의존성으로 추가
-- 데이터 로딩 방식을 업로드 기반으로 문서 업데이트
+- docs/constitution.md (v1.1) 참고 문서와 비교 검증 완료
+- 성능 제한 섹션에 근접성 분석 최대 행 제한 명시 (5,000행)
+- 모든 컨벤션 및 규칙이 참고 문서와 정합성 확인됨
 -->
 
 # 대구 공공데이터 시각화 프로젝트 Constitution
@@ -227,6 +226,7 @@ def function_name(param1: str, param2: int) -> dict:
 | 항목 | 제한 | 초과 시 처리 |
 |------|------|-------------|
 | 지도 시각화 최대 포인트 | 5,000개 | 샘플링 |
+| 근접성 분석 최대 행 | 5,000행 | 샘플링 |
 | 범주형 컬럼 상위 표시 | 20개 | 상위 N개만 표시 |
 
 ### 8.5 지원 데이터셋
@@ -378,7 +378,8 @@ streamlit run app.py
 | v1.0.0 | 2025-11-21 | 최초 제정 - 5개 핵심 원칙 정의 |
 | v1.1.0 | 2025-12-01 | docs/constitution.md 통합 - Git 규칙, 코드 스타일, 데이터 처리, 의존성, 문서화 규칙 추가 |
 | v1.2.0 | 2025-12-02 | v1.1 앱 개선사항 반영 - anthropic 패키지 추가, CSV 업로드 방식, AI 챗봇 범위 추가 |
+| v1.2.1 | 2025-12-09 | docs/constitution.md 참고 문서 정합성 검증 - 근접성 분석 성능 제한 추가 |
 
 ---
 
-**Version**: 1.2.0 | **Ratified**: 2025-11-21 | **Last Amended**: 2025-12-02
+**Version**: 1.2.1 | **Ratified**: 2025-11-21 | **Last Amended**: 2025-12-09

@@ -7,6 +7,7 @@ Auto-generated from all feature plans. Last updated: 2025-11-21
 - N/A (파일 기반, 사용자 업로드 CSV) (002-app-v1-1-upgrade)
 - Python 3.10+ (현재 환경 Python 3.12 호환) (004-app-v12-upgrade)
 - 파일 기반 (CSV 업로드, session_state 캐싱), model/ 디렉토리 (pkl 파일) (004-app-v12-upgrade)
+- Python 3.10+ (현재 환경 3.12, 호환 유지) (005-app-v1.3-backend-sep)
 
 - Python 3.10+ + Streamlit, pandas, numpy, plotly, folium, streamlit-folium (001-daegu-data-viz)
 
@@ -26,9 +27,9 @@ cd src [ONLY COMMANDS FOR ACTIVE TECHNOLOGIES][ONLY COMMANDS FOR ACTIVE TECHNOLO
 Python 3.10+: Follow standard conventions
 
 ## Recent Changes
+- 005-app-v1.3-backend-sep: Added Python 3.10+ (현재 환경 3.12, 호환 유지)
 - 004-app-v12-upgrade: Added Python 3.10+ (현재 환경 Python 3.12 호환)
 - 004-app-v12-upgrade: Added Python 3.10+ (현재 환경 Python 3.12 호환)
-- 001-app-v111-upgrade: Added [if applicable, e.g., PostgreSQL, CoreData, files or N/A]
 
 
 <!-- MANUAL ADDITIONS START -->

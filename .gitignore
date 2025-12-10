@@ -63,3 +63,14 @@ logs/
 # Temporary files
 *.tmp
 *.bak
+
+# Backend uploads (keep directory structure, ignore uploaded files)
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# Alembic
+alembic/versions/*.py
+!alembic/versions/__init__.py
+
+# Docker
+.dockerignore
