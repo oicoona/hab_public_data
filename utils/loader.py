@@ -93,13 +93,13 @@ def load_dataset_from_session(dataset_name: str) -> pd.DataFrame | None:
 @st.cache_data
 def load_dataset(dataset_name: str) -> pd.DataFrame:
     """
-    Load predefined dataset by name with caching.
+    Load predefined dataset by name with caching and date parsing.
 
     Parameters:
         dataset_name (str): One of ['cctv', 'lights', 'zones', 'parking', 'accident', 'train', 'test']
 
     Returns:
-        pd.DataFrame: Cached dataset
+        pd.DataFrame: Cached dataset with parsed date columns
 
     Raises:
         ValueError: If dataset_name not recognized
@@ -116,6 +116,15 @@ def load_dataset(dataset_name: str) -> pd.DataFrame:
         'test': 'data/test.csv'
     }
 
+    # Dataset-specific date columns mapping
+    date_columns = {
+        'cctv': ['설치연도'],
+        'lights': ['설치연도'],
+        'accident': ['사고일시'],
+        'train': ['사고일시'],
+        'test': ['사고일시']
+    }
+
     if dataset_name not in dataset_map:
         valid_names = ', '.join(dataset_map.keys())
         raise ValueError(
@@ -124,7 +133,18 @@ def load_dataset(dataset_name: str) -> pd.DataFrame:
         )
 
     file_path = dataset_map[dataset_name]
-    return read_csv_safe(file_path)
+    df = read_csv_safe(file_path)
+
+    # Convert date columns to datetime
+    if dataset_name in date_columns:
+        for col in date_columns[dataset_name]:
+            if col in df.columns:
+                try:
+                    df[col] = pd.to_datetime(df[col], errors='coerce')
+                except Exception as e:
+                    print(f"Warning: Could not convert {col} to datetime: {e}")
+
+    return df
 
 
 def get_dataset_info(df: pd.DataFrame) -> dict:

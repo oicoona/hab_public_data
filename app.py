@@ -1021,10 +1021,10 @@ def render_sidebar():
 
 def render_chatbot_tab():
     """
-    Render the chatbot tab for data Q&A. (T045-T050)
+    Render the chatbot tab for data Q&A with multi-dataset support. (T045-T050)
     """
     st.header("💬 데이터 질의응답")
-    st.markdown("업로드한 데이터셋에 대해 AI에게 질문하세요.")
+    st.markdown("업로드한 데이터셋에 대해 AI에게 질문하세요. 여러 데이터셋을 선택하여 상관 분석도 가능합니다.")
 
     # T050: Check API Key
     api_key = st.session_state.chatbot.get('api_key', '')
@@ -1050,38 +1050,63 @@ def render_chatbot_tab():
         st.info("📤 먼저 **프로젝트 개요** 탭에서 데이터셋을 업로드해주세요.")
         return
 
-    # T046: Dataset selection
-    selected_display_name = st.selectbox(
-        "분석할 데이터셋 선택:",
-        options=list(uploaded_datasets.keys()),
-        key="chatbot_dataset"
-    )
-    selected_dataset_key = uploaded_datasets[selected_display_name]
-    st.session_state.chatbot['selected_dataset'] = selected_dataset_key
+    # T046: Multi-dataset selection with checkboxes
+    st.subheader("📊 분석할 데이터셋 선택")
 
-    # Load selected dataset
-    df = load_dataset_from_session(selected_dataset_key)
-    if df is None:
+    # 3-column layout for checkboxes
+    cols = st.columns(3)
+    selected_datasets = []
+
+    for idx, (display_name, key) in enumerate(uploaded_datasets.items()):
+        col_idx = idx % 3
+        with cols[col_idx]:
+            icon = DATASET_MAPPING[key]['tab_icon']
+            if st.checkbox(f"{icon} {display_name}", key=f"cb_{key}", value=(idx == 0)):
+                selected_datasets.append((display_name, key))
+
+    if not selected_datasets:
+        st.warning("⚠️ 최소 1개 이상의 데이터셋을 선택해주세요.")
+        return
+
+    # Show selected datasets info
+    st.info(f"✅ 선택된 데이터셋: {', '.join([name for name, _ in selected_datasets])}")
+
+    # Load selected datasets
+    loaded_datasets = {}
+    for display_name, key in selected_datasets:
+        df = load_dataset_from_session(key)
+        if df is not None:
+            loaded_datasets[key] = {
+                'name': display_name,
+                'data': df
+            }
+
+    if not loaded_datasets:
         st.error("데이터를 불러올 수 없습니다.")
         return
 
     # Show dataset summary
-    with st.expander("📊 데이터셋 요약", expanded=False):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("행 수", f"{len(df):,}")
-        with col2:
-            st.metric("컬럼 수", len(df.columns))
-        with col3:
-            total_cells = len(df) * len(df.columns)
-            missing_pct = (df.isnull().sum().sum() / total_cells * 100) if total_cells > 0 else 0
-            st.metric("전체 결측률", f"{missing_pct:.1f}%")
-        st.dataframe(df.head(10), width='stretch')
+    with st.expander("📊 선택된 데이터셋 요약", expanded=False):
+        for key, info in loaded_datasets.items():
+            df = info['data']
+            st.markdown(f"**{info['name']}**")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("행 수", f"{len(df):,}")
+            with col2:
+                st.metric("컬럼 수", len(df.columns))
+            with col3:
+                total_cells = len(df) * len(df.columns)
+                missing_pct = (df.isnull().sum().sum() / total_cells * 100) if total_cells > 0 else 0
+                st.metric("결측률", f"{missing_pct:.1f}%")
+            st.dataframe(df.head(3), width='stretch')
+            st.markdown("---")
 
     st.markdown("---")
 
-    # T038: Get dataset-specific chat history
-    chat_history = get_chat_history(selected_dataset_key)
+    # T038: Get dataset-specific chat history (multi-dataset session key)
+    chat_session_key = "_".join(sorted([key for _, key in selected_datasets]))
+    chat_history = get_chat_history(chat_session_key)
 
     # T049: Display conversation history (컨테이너로 명확하게 구분)
     st.subheader("대화 내역")
@@ -1110,17 +1135,19 @@ def render_chatbot_tab():
         with st.chat_message('user'):
             st.markdown(user_question)
 
-        # T047: Generate response with streaming
+        # T047: Generate response with streaming (multi-dataset support)
         with st.chat_message('assistant'):
             try:
                 # Create Anthropic client
                 client = Anthropic(api_key=api_key)
 
-                # v1.1.2: Create data context with caching
-                cache_key = f"context_{selected_dataset_key}_{len(df)}"
-                if cache_key not in st.session_state:
-                    st.session_state[cache_key] = create_data_context(df, selected_display_name)
-                data_context = st.session_state[cache_key]
+                # v1.1.2: Create data context with caching (multi-dataset)
+                multi_data_context = ""
+                for key, info in loaded_datasets.items():
+                    cache_key = f"context_{key}_{len(info['data'])}"
+                    if cache_key not in st.session_state:
+                        st.session_state[cache_key] = create_data_context(info['data'], info['name'])
+                    multi_data_context += f"\n\n### {info['name']} 데이터셋\n{st.session_state[cache_key]}"
 
                 # Prepare messages for API
                 api_messages = [
@@ -1132,12 +1159,15 @@ def render_chatbot_tab():
                 response_container = st.empty()
                 full_response = ""
 
+                # Use first dataset as primary for tool operations
+                primary_df = list(loaded_datasets.values())[0]['data']
+
                 stream_gen = stream_chat_response_with_tools(
                     client=client,
                     model=st.session_state.chatbot['model'],
                     messages=api_messages,
-                    data_context=data_context,
-                    df=df
+                    data_context=multi_data_context,
+                    df=primary_df
                 )
 
                 # v1.1.3: Collect tool execution info for summary after response
@@ -1187,10 +1217,10 @@ def render_chatbot_tab():
                 error_msg = handle_chat_error(e)
                 st.error(error_msg)
 
-    # T039: Clear conversation button (dataset-specific)
+    # T039: Clear conversation button (multi-dataset session)
     if chat_history:
         if st.button("🗑️ 대화 내역 삭제", key="clear_chat"):
-            clear_chat_history(selected_dataset_key)
+            clear_chat_history(chat_session_key)
             st.rerun()
 
 
