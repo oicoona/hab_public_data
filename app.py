@@ -6,8 +6,10 @@ Provides individual dataset exploration, cross-dataset spatial analysis, and
 educational content to help data analysis learners discover insights independently.
 """
 import io
+import os
 import time
 import streamlit as st
+from dotenv import load_dotenv
 import pandas as pd
 import plotly.express as px
 from streamlit_folium import st_folium
@@ -163,6 +165,9 @@ AI_MODEL_OPTIONS = [
     {'id': 'claude-haiku-4-5-20251001', 'name': 'Claude Haiku 4.5', 'description': '간단한 질문에 최적'}
 ]
 
+# .env 파일 로드 (존재하는 경우)
+load_dotenv()
+
 
 def init_session_state():
     """
@@ -184,8 +189,20 @@ def init_session_state():
 
     # 챗봇 세션
     if 'chatbot' not in st.session_state:
+        # API Key 우선순위: .env 파일 → Streamlit secrets → 사용자 입력
+        api_key_from_env = os.getenv("CLAUDE_API_KEY", "")
+
+        # Streamlit secrets에서 안전하게 가져오기 (파일이 없을 수 있음)
+        api_key_from_secrets = ""
+        try:
+            api_key_from_secrets = st.secrets.get("CLAUDE_API_KEY", "")
+        except (FileNotFoundError, Exception):
+            pass  # secrets 파일이 없거나 키가 없으면 빈 문자열 사용
+
+        initial_api_key = api_key_from_env or api_key_from_secrets or ""
+
         st.session_state.chatbot = {
-            'api_key': '',
+            'api_key': initial_api_key,
             'model': 'claude-sonnet-4-5-20250929',
             'selected_dataset': None,
             'chat_history': {},  # T035: Dataset-specific chat history
@@ -198,6 +215,10 @@ def init_session_state():
             'max_points': 5000,  # 기본값
             'confirmed': False   # Enter 키 입력 여부
         }
+
+    # 지도 캐시 (데이터셋별 지도 상태 독립 관리)
+    if 'map_cache' not in st.session_state:
+        st.session_state.map_cache = {}
 
     st.session_state.initialized = True
 
@@ -310,12 +331,13 @@ def render_dataset_tab(dataset_name: str, dataset_display_name: str):
             popup_candidates = [col for col in df.columns if col not in [lat_col, lng_col]]
             popup_cols = popup_candidates[:3]  # Show first 3 columns in popup
 
-            # 지도 캐시 키에 max_points 포함
+            # 데이터셋별 지도 캐시 키
             max_points = st.session_state.map_settings['max_points']
-            cache_key = f"map_{dataset_name}_{len(df)}_{max_points}"
+            map_key = f"{dataset_name}_{max_points}"
 
-            if cache_key not in st.session_state:
-                st.session_state[cache_key] = create_folium_map(
+            # 지도 캐시에 없으면 새로 생성
+            if map_key not in st.session_state.map_cache:
+                st.session_state.map_cache[map_key] = create_folium_map(
                     df, lat_col, lng_col,
                     popup_cols=popup_cols,
                     color='blue',
@@ -324,7 +346,7 @@ def render_dataset_tab(dataset_name: str, dataset_display_name: str):
                 )
 
             # T042: Display map with returned_objects=[] to prevent rerendering
-            st_folium(st.session_state[cache_key], width=700, height=500, returned_objects=[])
+            st_folium(st.session_state.map_cache[map_key], width=700, height=500, returned_objects=[])
     else:
         st.info("ℹ️ 지리 좌표가 감지되지 않았습니다. 이 데이터셋에는 지도 시각화를 사용할 수 없습니다.")
 
@@ -672,13 +694,13 @@ def render_cross_analysis_tab():
                     emoji = color_emoji.get(ds['color'], '⚪')
                     st.markdown(f"{emoji} **{ds['name']}** ({len(ds['df']):,}개)")
 
-            # Overlay map caching with session_state
-            overlay_cache_key = f"overlay_map_{len(datasets_to_overlay)}_{sum(len(ds['df']) for ds in datasets_to_overlay)}"
-            if overlay_cache_key not in st.session_state:
-                st.session_state[overlay_cache_key] = create_overlay_map(datasets_to_overlay)
+            # Overlay map caching with map_cache
+            overlay_key = f"overlay_{len(datasets_to_overlay)}_{sum(len(ds['df']) for ds in datasets_to_overlay)}"
+            if overlay_key not in st.session_state.map_cache:
+                st.session_state.map_cache[overlay_key] = create_overlay_map(datasets_to_overlay)
 
             # Display map with returned_objects=[] to prevent rerendering
-            st_folium(st.session_state[overlay_cache_key], width=900, height=600, returned_objects=[])
+            st_folium(st.session_state.map_cache[overlay_key], width=900, height=600, returned_objects=[])
 
             st.info("💡 지도 우측 상단의 레이어 컨트롤을 사용하여 각 데이터셋을 개별적으로 켜고 끌 수 있습니다.")
         else:
@@ -895,23 +917,36 @@ def render_sidebar():
         st.header("🤖 AI 설정")
 
         # T041: API Key input
-        api_key = st.text_input(
-            "Anthropic API Key",
-            type="password",
-            placeholder="sk-ant-...",
-            help="Anthropic API Key를 입력하세요. https://console.anthropic.com 에서 발급받을 수 있습니다.",
-            key="sidebar_api_key"
-        )
+        # 기존에 .env나 secrets에서 로드된 API Key 확인
+        current_api_key = st.session_state.chatbot.get('api_key', '')
 
-        if api_key:
-            api_key = api_key.strip()  # 앞뒤 공백 제거
-            if validate_api_key(api_key):
-                st.session_state.chatbot['api_key'] = api_key
-                st.success("✅ API Key 설정됨")
-            else:
-                st.error("❌ API Key 형식이 올바르지 않습니다")
+        # .env 또는 secrets에서 로드된 경우 표시
+        if current_api_key and not st.session_state.get('api_key_manually_entered', False):
+            st.success("✅ API Key가 환경에서 로드되었습니다")
+            if st.button("🔄 API Key 직접 입력", key="manual_api_key"):
+                st.session_state['api_key_manually_entered'] = True
+                st.rerun()
         else:
-            st.info("API Key를 입력하면 AI 챗봇을 사용할 수 있습니다")
+            api_key = st.text_input(
+                "Anthropic API Key",
+                type="password",
+                value=current_api_key if current_api_key else "",
+                placeholder="sk-ant-...",
+                help="Anthropic API Key를 입력하세요. https://console.anthropic.com 에서 발급받을 수 있습니다.",
+                key="sidebar_api_key"
+            )
+
+            if api_key:
+                api_key = api_key.strip()  # 앞뒤 공백 제거
+                if validate_api_key(api_key):
+                    st.session_state.chatbot['api_key'] = api_key
+                    st.session_state['api_key_manually_entered'] = True
+                    st.success("✅ API Key 설정됨")
+                else:
+                    st.error("❌ API Key 형식이 올바르지 않습니다")
+            else:
+                if not current_api_key:
+                    st.info("API Key를 입력하면 AI 챗봇을 사용할 수 있습니다")
 
         # 지도 설정
         st.subheader("🗺️ 지도 설정")
@@ -936,10 +971,8 @@ def render_sidebar():
                     else:
                         st.session_state.map_settings['max_points'] = new_val
                         st.session_state.map_settings['confirmed'] = True
-                        # 지도 캐시 초기화
-                        keys_to_delete = [k for k in list(st.session_state.keys()) if k.startswith('map_') and k != 'map_settings']
-                        for k in keys_to_delete:
-                            del st.session_state[k]
+                        # 지도 캐시 초기화 (map_cache 딕셔너리 비우기)
+                        st.session_state.map_cache = {}
                 except ValueError:
                     st.error("❌ 숫자를 입력해주세요")
 
@@ -1050,14 +1083,20 @@ def render_chatbot_tab():
     # T038: Get dataset-specific chat history
     chat_history = get_chat_history(selected_dataset_key)
 
-    # T049: Display conversation history
+    # T049: Display conversation history (컨테이너로 명확하게 구분)
     st.subheader("대화 내역")
 
-    for msg in chat_history:
-        with st.chat_message(msg['role']):
-            st.markdown(msg['content'])
+    # 대화 내역 컨테이너 (스크롤 가능)
+    chat_container = st.container()
+    with chat_container:
+        if not chat_history:
+            st.info("💬 아직 대화 내역이 없습니다. 아래에서 질문을 시작하세요!")
+        else:
+            for idx, msg in enumerate(chat_history):
+                with st.chat_message(msg['role']):
+                    st.markdown(msg['content'])
 
-    # T047, T048: Question input and send
+    # T047, T048: Question input and send (하단 고정)
     user_question = st.chat_input("데이터에 대해 질문하세요...")
 
     if user_question:

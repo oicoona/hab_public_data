@@ -38,8 +38,8 @@ load_dotenv()
 
 # API Key 우선순위 적용
 api_key = (
-    os.getenv("ANTHROPIC_API_KEY") or  # .env 파일
-    st.secrets.get("ANTHROPIC_API_KEY", None) or  # Streamlit secrets
+    os.getenv("CLAUDE_API_KEY") or  # .env 파일
+    st.secrets.get("CLAUDE_API_KEY", None) or  # Streamlit secrets
     ""  # 사용자 입력 대기
 )
 ```
