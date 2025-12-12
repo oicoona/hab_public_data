@@ -1043,7 +1043,7 @@ def render_chatbot_tab():
             total_cells = len(df) * len(df.columns)
             missing_pct = (df.isnull().sum().sum() / total_cells * 100) if total_cells > 0 else 0
             st.metric("전체 결측률", f"{missing_pct:.1f}%")
-        st.dataframe(df.head(3), width='stretch')
+        st.dataframe(df.head(10), width='stretch')
 
     st.markdown("---")
 
